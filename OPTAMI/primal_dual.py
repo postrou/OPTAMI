@@ -1,5 +1,3 @@
-from copy import deepcopy
-
 import numpy as np
 import torch
 from torch.optim.optimizer import Optimizer
@@ -57,7 +55,10 @@ class PrimalDualAccelerated(Optimizer):
         grad_phi_k = []
         for param in params:
             param_copy = param.clone().detach()
-            assert all(param_copy == 0), 'Initial point should be all zeros!'
+            assert len(param_copy.shape) <= 2, "May be some troubles with tensor of higher order"
+            # if len(param_copy.shape) == 2:
+
+            assert torch.all(param_copy == 0), 'Initial point should be all zeros!'
             grad_phi_k.append(param_copy) # since we won't need \grad \phi(\lambda_0)
         state['y'] = []
         state['x_hat'] = None
