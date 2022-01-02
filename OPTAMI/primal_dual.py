@@ -17,10 +17,13 @@ class PrimalDualAccelerated(Optimizer):
             subsolver=opt.BDGM,
             subsolver_bdgm=None,
             tol_subsolve=None,
-            subsolver_args=None
+            subsolver_args=None,
+            calculate_x_function=None
     ):
         if not M_p >= 0.0:
             raise ValueError("Invalid L: {}".format(M_p))
+        if calculate_x_function is None:
+            raise ValueError('We need function for primal (x) value calculation from lambda (dual) variable')
 
         M = M_p * (p_order + 2)
         M_squared, M_p_squared = M ** 2, M_p ** 2
@@ -44,6 +47,8 @@ class PrimalDualAccelerated(Optimizer):
         super().__init__(params, defaults)
 
         self._init_state()
+
+        self._calculate_x = calculate_x_function
 
     def _init_state(self):
         assert len(self.param_groups) == 1
@@ -73,6 +78,7 @@ class PrimalDualAccelerated(Optimizer):
         assert len(self.param_groups) == 1
 
         # initialisation
+        print('Step 1: Initialization...')
         group = self.param_groups[0]
         params = group['params']
         M_p = group['M_p']
@@ -82,16 +88,20 @@ class PrimalDualAccelerated(Optimizer):
         k = len(A_k) - 1    # because we keep A_next too
 
         # step 3
+        print('Step 3: Computation of v_k...')
         v = self._estim_seq_subproblem(k, group)
 
         # step 4 (we won't need a)
+        print('Step 4: Computation of A_{k + 1}...')
         A_next = self._calculate_A(k + 1, group)
 
         # step 5
+        print('Step 5: Computation of y_k...')
         A_over_A_next = A / A_next
         self._update_param_point(v, A_over_A_next, params)
 
         # step 6
+        print('Step 6: Computation of \\lambda_{k + 1} (tensor step)...')
         subsolver = group['subsolver']
         subsolver_bdgm = group['subsolver_bdgm']
         tol_subsolve = group['tol_subsolve']
@@ -107,9 +117,11 @@ class PrimalDualAccelerated(Optimizer):
 
         # step 7 (since here we'll need this function only on step 3 on next k,
         #   here we only calculate \nabla \phi(\lambda_{k + 1})
+        print('Step 7: Computation of \\nabla \\phi(\\lambda_{k + 1}...')
         self._calculate_closure_grad(closure, params)
 
         # step 8
+        print('Step 8: Computation of \\hat x_{k + 1}...')
         self._calculate_x_hat_next(A_over_A_next)
 
     def _calculate_A(self, k, param_group):
@@ -118,6 +130,7 @@ class PrimalDualAccelerated(Optimizer):
         return A_factor * (k / (p_order + 1)) ** (p_order + 1)
 
     def _estim_seq_subproblem(self, k, param_group):
+        params = param_group['params']
         p_order = param_group['p_order']
         C = param_group['C']
 
@@ -126,14 +139,14 @@ class PrimalDualAccelerated(Optimizer):
         grad_phi_k = state['grad_phi_k']
 
         if k == 0:
-            return [torch.zeros_like(param) for param in param_group['params']]
+            return [torch.zeros_like(param) for param in params]
 
         p_fact = ttv.factorial(p_order)
         A_prev = A_k[0]
         one_over_p = 1 / p_order
         fst_factor = (p_fact / C) ** one_over_p
         results = [0.0, 0.0]
-        for i, param in enumerate(param_group):
+        for i, param in enumerate(params):
             grad_sum = torch.zeros_like(param)
             for j in range(1, k):
                 A = A_k[j]
@@ -155,16 +168,15 @@ class PrimalDualAccelerated(Optimizer):
         grad_phi_next = torch.autograd.grad(outputs=outputs, inputs=params, retain_graph=False)
         state['grad_phi_k'].append(grad_phi_next)
 
-    def _calculate_x_hat_next(self, A_over_A_next):
-        x = self._calculate_x()
-        state = self.state['default']
-        x_hat = state['x_hat']
-        if x_hat is None:  # it means k == 0
-            x_hat_next = x  # a == A_next
-        else:
-            x_hat_next = (1 - A_over_A_next) * x + A_over_A_next * x_hat
-        state['x_hat'] = x_hat_next
+    def _calculate_x_hat_next(self, A_over_A_next, params):
+        for param in params:
+            x = self._calculate_x(param)
+            state = self.state['default']
+            x_hat = state['x_hat']
+            if x_hat is None:  # it means k == 0
+                state['x_hat'] = []
+                x_hat_next = x  # a == A_next
+            else:
+                x_hat_next = (1 - A_over_A_next) * x + A_over_A_next * x_hat
+            state['x_hat'].append(x_hat_next)
         # return x_hat_next
-
-    def _calculate_x(self):
-        raise NotImplementedError()
