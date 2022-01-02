@@ -68,8 +68,6 @@ def main():
     eta_outer = torch.outer(torch.ones(len(eta)), eta)
 
     M_over_gamma = M / gamma
-    lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
-    under_exp_vector = (lamb_factor_over_gamma - M_over_gamma).view(-1)
 
     def calculate_x():
         return torch.softmax(under_exp_vector, dim=0)
@@ -82,6 +80,8 @@ def main():
 
     def f():
         optimizer.zero_grad()
+        lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
+        under_exp_vector = (lamb_factor_over_gamma - M_over_gamma).view(-1)
         return torch.logsumexp(under_exp_vector, dim=0) - lamb @ b
 
     optimizer.step(f)
