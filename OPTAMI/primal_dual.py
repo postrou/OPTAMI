@@ -122,7 +122,7 @@ class PrimalDualAccelerated(Optimizer):
 
         # step 8
         # print('Step 8: Computation of \\hat x_{k + 1}...')
-        self._calculate_x_hat_next(A_over_A_next, params)
+        self._calculate_x_hat_next(k, A_over_A_next, params)
 
     def _calculate_A(self, k, param_group):
         A_factor = param_group['A_factor']
@@ -142,15 +142,16 @@ class PrimalDualAccelerated(Optimizer):
             return [torch.zeros_like(param) for param in params]
 
         p_fact = ttv.factorial(p_order)
-        A_prev = A_k[0]
         one_over_p = 1 / p_order
         fst_factor = (p_fact / C) ** one_over_p
-        results = [0.0, 0.0]
+
+        results = [torch.empty_like(param) for param in params]
         for i, param in enumerate(params):
             grad_sum = torch.zeros_like(param)
-            for j in range(1, k):
+            for j in range(1, k + 1):
                 A = A_k[j]
-                grad_phi = torch.tensor(grad_phi_k[j])
+                A_prev = A_k[j - 1]
+                grad_phi = grad_phi_k[j][i]
                 grad_sum += (A - A_prev) * grad_phi
 
             snd_factor = grad_sum / (grad_sum.norm() ** (1 - one_over_p))
@@ -168,11 +169,11 @@ class PrimalDualAccelerated(Optimizer):
         grad_phi_next = torch.autograd.grad(outputs=outputs, inputs=params, retain_graph=False)
         state['grad_phi_k'].append(grad_phi_next)
 
-    def _calculate_x_hat_next(self, A_over_A_next, params):
+    def _calculate_x_hat_next(self, k, A_over_A_next, params):
         for i, param in enumerate(params):
             x = self._calculate_x(param)
             state = self.state['default']
-            if len(state['x_hat']) == 0:  # it means k == 0
+            if k == 0:
                 x_hat_next = x  # a == A_next
                 state['x_hat'].append(x_hat_next)
             else:
