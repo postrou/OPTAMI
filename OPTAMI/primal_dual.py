@@ -65,8 +65,7 @@ class PrimalDualAccelerated(Optimizer):
 
             # assert torch.all(param_copy == 0), 'Initial point should be all zeros!'
             grad_phi_k.append(param_copy) # since we won't need \grad \phi(\lambda_0)
-        state['y'] = []
-        state['x_hat'] = None
+        state['x_hat'] = []
         state['grad_phi_k'] = [tuple(grad_phi_k)]
 
         A = self._calculate_A(0, group)
@@ -78,7 +77,7 @@ class PrimalDualAccelerated(Optimizer):
         assert len(self.param_groups) == 1
 
         # initialisation
-        print('Step 1: Initialization...')
+        # print('Step 1: Initialization...')
         group = self.param_groups[0]
         params = group['params']
         M = group['M']
@@ -88,20 +87,21 @@ class PrimalDualAccelerated(Optimizer):
         k = len(A_k) - 1    # because we keep A_next too
 
         # step 3
-        print('Step 3: Computation of v_k...')
+        # print('Step 3: Computation of v_k...')
         v = self._estim_seq_subproblem(k, group)
 
         # step 4 (we won't need a)
-        print('Step 4: Computation of A_{k + 1}...')
+        # print('Step 4: Computation of A_{k + 1}...')
         A_next = self._calculate_A(k + 1, group)
+        A_k.append(A_next)
 
         # step 5
-        print('Step 5: Computation of y_k...')
+        # print('Step 5: Computation of y_k...')
         A_over_A_next = A / A_next
         self._update_param_point(v, A_over_A_next, params)
 
         # step 6
-        print('Step 6: Computation of \\lambda_{k + 1} (tensor step)...')
+        # print('Step 6: Computation of \\lambda_{k + 1} (tensor step)...')
         subsolver = group['subsolver']
         subsolver_bdgm = group['subsolver_bdgm']
         tol_subsolve = group['tol_subsolve']
@@ -117,12 +117,12 @@ class PrimalDualAccelerated(Optimizer):
 
         # step 7 (since here we'll need this function only on step 3 on next k,
         #   here we only calculate \nabla \phi(\lambda_{k + 1})
-        print('Step 7: Computation of \\nabla \\phi(\\lambda_{k + 1}...')
+        # print('Step 7: Computation of \\nabla \\phi(\\lambda_{k + 1}...')
         self._calculate_closure_grad(closure, params)
 
         # step 8
-        print('Step 8: Computation of \\hat x_{k + 1}...')
-        self._calculate_x_hat_next(A_over_A_next)
+        # print('Step 8: Computation of \\hat x_{k + 1}...')
+        self._calculate_x_hat_next(A_over_A_next, params)
 
     def _calculate_A(self, k, param_group):
         A_factor = param_group['A_factor']
@@ -169,14 +169,13 @@ class PrimalDualAccelerated(Optimizer):
         state['grad_phi_k'].append(grad_phi_next)
 
     def _calculate_x_hat_next(self, A_over_A_next, params):
-        for param in params:
+        for i, param in enumerate(params):
             x = self._calculate_x(param)
             state = self.state['default']
-            x_hat = state['x_hat']
-            if x_hat is None:  # it means k == 0
-                state['x_hat'] = []
+            if len(state['x_hat']) == 0:  # it means k == 0
                 x_hat_next = x  # a == A_next
+                state['x_hat'].append(x_hat_next)
             else:
+                x_hat = state['x_hat'][i]
                 x_hat_next = (1 - A_over_A_next) * x + A_over_A_next * x_hat
-            state['x_hat'].append(x_hat_next)
-        # return x_hat_next
+                state['x_hat'][i] = x_hat_next
