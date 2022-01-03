@@ -63,7 +63,7 @@ class PrimalDualAccelerated(Optimizer):
             assert len(param_copy.shape) <= 2, "May be some troubles with tensor of higher order"
             # if len(param_copy.shape) == 2:
 
-            assert torch.all(param_copy == 0), 'Initial point should be all zeros!'
+            # assert torch.all(param_copy == 0), 'Initial point should be all zeros!'
             grad_phi_k.append(param_copy) # since we won't need \grad \phi(\lambda_0)
         state['y'] = []
         state['x_hat'] = None
@@ -81,7 +81,7 @@ class PrimalDualAccelerated(Optimizer):
         print('Step 1: Initialization...')
         group = self.param_groups[0]
         params = group['params']
-        M_p = group['M_p']
+        M = group['M']
         state = self.state['default']
         A_k = state['A_k']
         A = A_k[-1]
@@ -108,7 +108,7 @@ class PrimalDualAccelerated(Optimizer):
         subsolver_args = group['subsolver_args']
         optimizer = subsolver(
             params,
-            L=M_p,
+            L=M,
             subsolver_bdgm=subsolver_bdgm,
             tol_subsolve=tol_subsolve,
             subsolver_args=subsolver_args
