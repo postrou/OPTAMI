@@ -57,19 +57,18 @@ class PrimalDualAccelerated(Optimizer):
 
         # filling state
         state = self.state['default']
-        grad_phi_k = []
+        grad_phi_k = [(None for _ in params)]
         for param in params:
             param_copy = param.clone().detach()
             assert len(param_copy.shape) <= 2, "May be some troubles with tensor of higher order"
             # if len(param_copy.shape) == 2:
 
             # assert torch.all(param_copy == 0), 'Initial point should be all zeros!'
-            grad_phi_k.append(param_copy) # since we won't need \grad \phi(\lambda_0)
+            # grad_phi_k.append(param_copy) # since we won't need \grad \phi(\lambda_0)
         state['x_hat'] = []
-        state['grad_phi_k'] = [tuple(grad_phi_k)]
+        state['grad_phi_k'] = grad_phi_k
 
-        A = self._calculate_A(0, group)
-        state['A_k'] = [A]
+        state['A_k'] = [0.0]
 
     def step(self, closure=None):
         if closure is None:
@@ -84,7 +83,7 @@ class PrimalDualAccelerated(Optimizer):
         state = self.state['default']
         A_k = state['A_k']
         A = A_k[-1]
-        k = len(A_k) - 1    # because we keep A_next too
+        k = len(A_k) - 1    # because we increase k in the end of the step
 
         # step 3
         # print('Step 3: Computation of v_k...')
@@ -143,7 +142,8 @@ class PrimalDualAccelerated(Optimizer):
 
         p_fact = ttv.factorial(p_order)
         one_over_p = 1 / p_order
-        fst_factor = (p_fact / C) ** one_over_p
+        # fst_factor = (p_fact / C) ** one_over_p
+        fst_factor = p_fact / C
 
         results = [torch.empty_like(param) for param in params]
         for i, param in enumerate(params):
@@ -154,7 +154,10 @@ class PrimalDualAccelerated(Optimizer):
                 grad_phi = grad_phi_k[j][i]
                 grad_sum += (A - A_prev) * grad_phi
 
-            snd_factor = grad_sum / (grad_sum.norm() ** (1 - one_over_p))
+            # snd_factor = grad_sum / (grad_sum.norm() ** (1 - one_over_p))
+            grad_sum_norm = grad_sum.norm()
+            snd_factor = grad_sum / grad_sum_norm
+            fst_factor = (fst_factor * grad_sum_norm) ** one_over_p
             results[i] = -fst_factor * snd_factor
         return results
 
