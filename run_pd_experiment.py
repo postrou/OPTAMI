@@ -43,8 +43,8 @@ def calculate_M_matrix(m):
 def calculate_x(lamb, half_lamb_len, gamma, M_matrix_over_gamma):
     psi = lamb[:half_lamb_len]
     eta = lamb[half_lamb_len:]
-    psi_outer = torch.outer(psi, torch.ones(len(psi)))
-    eta_outer = torch.outer(torch.ones(len(eta)), eta)
+    psi_outer = torch.outer(psi, torch.ones(half_lamb_len))
+    eta_outer = torch.outer(torch.ones(half_lamb_len), eta)
     lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
     under_exp_vector = (lamb_factor_over_gamma - M_matrix_over_gamma).view(-1)
     return torch.softmax(under_exp_vector, dim=0)
@@ -136,7 +136,7 @@ def run_experiment(M_p, gamma, eps, image_index=0, max_steps=100):
         [lamb],
         M_p=M_p,
         eps=0.01,
-        calculate_x_function=lambda lamb: calculate_x(lamb, half_lamb_len, gamma, M_matrix_over_gamma)
+        calculate_primal_var=lambda lamb: calculate_x(lamb, half_lamb_len, gamma, M_matrix_over_gamma)
     )
     closure = lambda: phi(lamb, optimizer, half_lamb_len, gamma, M_matrix_over_gamma, b)
     optimize(optimizer, closure, eps, M_matrix, gamma, max_steps)

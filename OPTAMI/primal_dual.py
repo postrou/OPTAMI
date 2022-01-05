@@ -18,11 +18,11 @@ class PrimalDualAccelerated(Optimizer):
             subsolver_bdgm=None,
             tol_subsolve=None,
             subsolver_args=None,
-            calculate_x_function=None
+            calculate_primal_var=None
     ):
         if not M_p >= 0.0:
             raise ValueError("Invalid L: {}".format(M_p))
-        if calculate_x_function is None:
+        if calculate_primal_var is None:
             raise ValueError('We need function for primal (x) value calculation from lambda (dual) variable')
 
         M = M_p * (p_order + 2)
@@ -48,7 +48,7 @@ class PrimalDualAccelerated(Optimizer):
 
         self._init_state()
 
-        self._calculate_x = calculate_x_function
+        self._calculate_primal_var = calculate_primal_var
 
     def _init_state(self):
         assert len(self.param_groups) == 1
@@ -83,7 +83,7 @@ class PrimalDualAccelerated(Optimizer):
         state = self.state['default']
         A_k = state['A_k']
         A = A_k[-1]
-        k = len(A_k) - 1    # because we increase k in the end of the step
+        k = len(A_k) - 1
 
         # step 3
         # print('Step 3: Computation of v_k...')
@@ -114,7 +114,7 @@ class PrimalDualAccelerated(Optimizer):
         )
         optimizer.step(closure)
 
-        # step 7 (since here we'll need this function only on step 3 on next k,
+        # step 7 (since we'll need this function only on step 3 on next k,
         #   here we only calculate \nabla \phi(\lambda_{k + 1})
         # print('Step 7: Computation of \\nabla \\phi(\\lambda_{k + 1}...')
         self._calculate_closure_grad(closure, params)
@@ -174,10 +174,10 @@ class PrimalDualAccelerated(Optimizer):
 
     def _calculate_x_hat_next(self, k, A_over_A_next, params):
         for i, param in enumerate(params):
-            x = self._calculate_x(param)
+            x = self._calculate_primal_var(param)
             state = self.state['default']
             if k == 0:
-                x_hat_next = x  # a == A_next
+                x_hat_next = x  # A = 0
                 state['x_hat'].append(x_hat_next)
             else:
                 x_hat = state['x_hat'][i]
