@@ -31,6 +31,15 @@ def cartesian_product(*arrays):
     return arr.reshape(-1, la)
 
 
+def calculate_M_matrix(m):
+    M_matrix = np.arange(m)
+    M_matrix = cartesian_product(M_matrix, M_matrix)
+    M_matrix = cdist(M_matrix, M_matrix)
+    # M_matrix /= np.max(M_matrix)
+    M_matrix /= np.median(M_matrix)
+    return torch.tensor(M_matrix)
+
+
 def calculate_x(lamb, half_lamb_len, gamma, M_matrix_over_gamma):
     psi = lamb[:half_lamb_len]
     eta = lamb[half_lamb_len:]
@@ -105,11 +114,7 @@ def run_experiment(M_p, gamma, eps, image_index=0, max_steps=100):
     n = len(images[0])
     m = int(np.sqrt(n))
 
-    M_matrix = np.arange(m)
-    M_matrix = cartesian_product(M_matrix, M_matrix)
-    M_matrix = cdist(M_matrix, M_matrix)
-    M_matrix /= np.max(M_matrix)
-    M_matrix = torch.tensor(M_matrix)
+    M_matrix = calculate_M_matrix(m)
 
     # experiments were done for
     p_list = [34860, 31226, 239, 37372, 17390]
