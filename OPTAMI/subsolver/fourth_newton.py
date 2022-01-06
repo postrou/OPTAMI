@@ -53,8 +53,8 @@ def fourth_subsolver(c=None, A=None, T=None, U=None, L=0., fourth_line_search_ep
 
     g = lambda tau: dual_func(tau, ct, T, L)
 
-    left_point = torch.tensor([0.])
-    middle_point = torch.tensor([2.])
+    left_point = torch.tensor([0.], device=T.device)
+    middle_point = torch.tensor([2.], device=T.device)
     tau_best = l_s.ray_line_search(g, middle_point, left_point, eps=fourth_line_search_eps)
     # print(tau_best)
     invert = inversion(T, L, tau_best)

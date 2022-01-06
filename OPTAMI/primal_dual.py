@@ -28,7 +28,7 @@ class PrimalDualAccelerated(Optimizer):
         M = M_p * (p_order + 2)
         M_squared, M_p_squared = M ** 2, M_p ** 2
 
-        C = p_order / 2 * np.sqrt((p_order + 1) / (p_order - 1) * (M_squared - M_p_squared))
+        C = p_order / 2 * torch.sqrt((p_order + 1) / (p_order - 1) * (M_squared - M_p_squared))
         A_factor = ((p_order - 1) * (M_squared - M_p_squared) /
                     (4 * (p_order + 1) * p_order ** 2 * M_squared)) ** (p_order / 2)
 
