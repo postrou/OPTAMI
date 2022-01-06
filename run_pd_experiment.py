@@ -27,7 +27,7 @@ def cartesian_product(*arrays):
     dtype = np.result_type(*arrays)
     arr = np.empty([len(a) for a in arrays] + [la], dtype=dtype)
     for i, a in enumerate(np.ix_(*arrays)):
-        arr[...,i] = a
+        arr[..., i] = a
     return arr.reshape(-1, la)
 
 
@@ -46,7 +46,9 @@ def calculate_x(lamb, half_lamb_len, gamma, M_matrix_over_gamma, device='cpu'):
     psi_outer = torch.outer(psi, torch.ones(half_lamb_len, device=device))
     eta_outer = torch.outer(torch.ones(half_lamb_len, device=device), eta)
     lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
-    under_exp_vector = (lamb_factor_over_gamma - M_matrix_over_gamma).view(-1)
+    under_exp_vector_splitted = (lamb_factor_over_gamma - M_matrix_over_gamma).hsplit(M_matrix_over_gamma.shape[1])
+    assert len(under_exp_vector_splitted) == M_matrix_over_gamma.shape[1]
+    under_exp_vector = torch.vstack(under_exp_vector_splitted).view(-1)
     return torch.softmax(under_exp_vector, dim=0)
 
 
@@ -57,7 +59,9 @@ def phi(lamb, optimizer, half_lamb_len, gamma, M_matrix_over_gamma, b, device='c
     psi_outer = torch.outer(psi, torch.ones(len(psi), device=device))
     eta_outer = torch.outer(torch.ones(len(eta), device=device), eta)
     lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
-    under_exp_vector = (lamb_factor_over_gamma - M_matrix_over_gamma).view(-1)
+    under_exp_vector_splitted = (lamb_factor_over_gamma - M_matrix_over_gamma).hsplit(M_matrix_over_gamma.shape[1])
+    assert len(under_exp_vector_splitted) == M_matrix_over_gamma.shape[1]
+    under_exp_vector = torch.vstack(under_exp_vector_splitted).view(-1)
     return torch.logsumexp(under_exp_vector, dim=0) - lamb @ b
 
 
@@ -94,14 +98,19 @@ def optimize(optimizer, closure, eps, M_matrix, gamma, max_steps=100, device='cp
             i += 1
 
 
-def calculate_lipschitz_constant(n, gamma, p_order=3, device='cpu'):
-    A = torch.hstack([torch.eye(n)] * n).to(device)
+def calculate_A_matrix(n):
+    A = torch.hstack([torch.eye(n)] * n)
     vectors = torch.vstack(
         [torch.hstack([
             torch.zeros(1, n) if j != i else torch.ones(1, n) for j in range(n)
         ]) for i in trange(n, desc='Building matrix A')]
-    ).to(device)
+    )
     A = torch.vstack((A, vectors))
+    return A
+
+
+def calculate_lipschitz_constant(n, gamma, p_order=3, device='cpu'):
+    A = calculate_A_matrix(n).to(device)
     A_A_T = A @ A.T
     _, s, _ = torch.svd(A_A_T, compute_uv=False)
     if p_order == 3:
