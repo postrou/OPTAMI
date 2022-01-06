@@ -62,7 +62,7 @@ def phi(lamb, optimizer, half_lamb_len, gamma, M_matrix_over_gamma, b, device='c
     under_exp_vector_splitted = (lamb_factor_over_gamma - M_matrix_over_gamma).hsplit(M_matrix_over_gamma.shape[1])
     assert len(under_exp_vector_splitted) == M_matrix_over_gamma.shape[1]
     under_exp_vector = torch.vstack(under_exp_vector_splitted).view(-1)
-    return torch.logsumexp(under_exp_vector, dim=0) - lamb @ b
+    return gamma * torch.logsumexp(under_exp_vector, dim=0) - lamb @ b
 
 
 def f(x, M_matrix, gamma, device='cpu'):
