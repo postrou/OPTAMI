@@ -70,7 +70,10 @@ def f(x, M_matrix, gamma, device='cpu'):
     x_copy_under_log = x_copy.clone()
     # TODO: check
     x_copy_under_log[x_copy == 0.] = 1e-6
-    return (M_matrix.view(-1) * x_copy).sum() + gamma * (x_copy * torch.log(x_copy_under_log)).sum()
+
+    M_matrix_splitted = M_matrix.hsplit(M_matrix.shape[1])
+    M_matrix_to_vector = torch.vstack(M_matrix_splitted).view(-1)
+    return (M_matrix_to_vector * x_copy).sum() + gamma * (x_copy * torch.log(x_copy_under_log)).sum()
 
 
 def optimize(optimizer, closure, eps, M_matrix, gamma, max_steps=100, device='cpu'):
