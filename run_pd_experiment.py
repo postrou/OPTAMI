@@ -58,7 +58,7 @@ def phi(lamb, optimizer, half_lamb_len, gamma, M_matrix_over_gamma, b, device='c
     eta_outer = torch.outer(torch.ones(len(eta), device=device), eta)
     lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
     under_exp_vector = (lamb_factor_over_gamma - M_matrix_over_gamma).T.reshape(-1)
-    return torch.logsumexp(under_exp_vector, dim=0) - lamb @ b
+    return gamma * torch.logsumexp(under_exp_vector, dim=0) - lamb @ b
 
 
 def f(x, M_matrix, gamma, device='cpu'):
