@@ -46,9 +46,7 @@ def calculate_x(lamb, half_lamb_len, gamma, M_matrix_over_gamma, device='cpu'):
     psi_outer = torch.outer(psi, torch.ones(half_lamb_len, device=device))
     eta_outer = torch.outer(torch.ones(half_lamb_len, device=device), eta)
     lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
-    under_exp_vector_splitted = (lamb_factor_over_gamma - M_matrix_over_gamma).hsplit(M_matrix_over_gamma.shape[1])
-    assert len(under_exp_vector_splitted) == M_matrix_over_gamma.shape[1]
-    under_exp_vector = torch.vstack(under_exp_vector_splitted).view(-1)
+    under_exp_vector = (lamb_factor_over_gamma - M_matrix_over_gamma).T.reshape(-1)
     return torch.softmax(under_exp_vector, dim=0)
 
 
@@ -59,10 +57,8 @@ def phi(lamb, optimizer, half_lamb_len, gamma, M_matrix_over_gamma, b, device='c
     psi_outer = torch.outer(psi, torch.ones(len(psi), device=device))
     eta_outer = torch.outer(torch.ones(len(eta), device=device), eta)
     lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
-    under_exp_vector_splitted = (lamb_factor_over_gamma - M_matrix_over_gamma).hsplit(M_matrix_over_gamma.shape[1])
-    assert len(under_exp_vector_splitted) == M_matrix_over_gamma.shape[1]
-    under_exp_vector = torch.vstack(under_exp_vector_splitted).view(-1)
-    return gamma * torch.logsumexp(under_exp_vector, dim=0) - lamb @ b
+    under_exp_vector = (lamb_factor_over_gamma - M_matrix_over_gamma).T.reshape(-1)
+    return torch.logsumexp(under_exp_vector, dim=0) - lamb @ b
 
 
 def f(x, M_matrix, gamma, device='cpu'):
