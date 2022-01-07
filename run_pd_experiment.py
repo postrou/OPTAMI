@@ -61,6 +61,24 @@ def phi(lamb, optimizer, half_lamb_len, gamma, M_matrix_over_gamma, b, device='c
     return gamma * torch.logsumexp(under_exp_vector, dim=0) - lamb @ b
 
 
+# just in case
+def grad_phi(lamb, M_matrix_over_gamma, A_matrix, b):
+    half_lamb_len = int(len(lamb) / 2)
+    psi = lamb[:half_lamb_len]
+    eta = lamb[half_lamb_len:]
+    psi_outer = np.outer(psi, np.ones(len(psi)))
+    eta_outer = np.outer(np.ones(len(eta)), eta)
+    lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
+    exp_matrix = np.exp(lamb_factor_over_gamma - M_matrix_over_gamma)
+    exp_matrix_columns = np.hsplit(exp_matrix, exp_matrix.shape[1])
+    assert len(exp_matrix_columns) == exp_matrix.shape[1]
+    exp_matrix_vector = np.vstack(exp_matrix_columns)
+    
+    numerator = np.sum(exp_matrix_vector.reshape(-1) * A_matrix, axis=1)
+    denominator = exp_matrix.sum()
+    return numerator / denominator - b
+
+
 def f(x, M_matrix, gamma, device='cpu'):
     x_copy = x.detach().clone().to(device)
     x_copy_under_log = x_copy.clone()
