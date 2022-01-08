@@ -3,6 +3,7 @@ import numpy as np
 from scipy.spatial.distance import cdist
 from mnist import MNIST
 from tqdm import trange
+from IPython.display import clear_output
 
 from OPTAMI import *
 
@@ -40,39 +41,58 @@ def calculate_M_matrix(m):
     return torch.tensor(M_matrix)
 
 
-def calculate_x(lamb, half_lamb_len, gamma, M_matrix_over_gamma, device='cpu'):
-    psi = lamb[:half_lamb_len]
-    eta = lamb[half_lamb_len:]
-    psi_outer = torch.outer(psi, torch.ones(half_lamb_len, device=device))
-    eta_outer = torch.outer(torch.ones(half_lamb_len, device=device), eta)
-    lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
-    under_exp_vector = (lamb_factor_over_gamma - M_matrix_over_gamma).T.reshape(-1)
-    return torch.softmax(under_exp_vector, dim=0)
+# def calculate_x(lamb, half_lamb_len, gamma, M_matrix_over_gamma, device='cpu'):
+#     psi = lamb[:half_lamb_len]
+#     eta = lamb[half_lamb_len:]
+#     psi_outer = torch.outer(psi, torch.ones(half_lamb_len, device=device))
+#     eta_outer = torch.outer(torch.ones(half_lamb_len, device=device), eta)
+#     lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
+#     under_exp_vector = (lamb_factor_over_gamma - M_matrix_over_gamma).T.reshape(-1)
+#     return torch.softmax(under_exp_vector, dim=0)
 
 
-def phi(lamb, optimizer, half_lamb_len, gamma, M_matrix_over_gamma, b, device='cpu'):
-    optimizer.zero_grad()
-    psi = lamb[:half_lamb_len]
-    eta = lamb[half_lamb_len:]
-    psi_outer = torch.outer(psi, torch.ones(len(psi), device=device))
-    eta_outer = torch.outer(torch.ones(len(eta), device=device), eta)
-    lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
-    under_exp_vector = (lamb_factor_over_gamma - M_matrix_over_gamma).T.reshape(-1)
-    return gamma * torch.logsumexp(under_exp_vector, dim=0) - lamb @ b
+def calculate_x(lamb, n, M_matrix_over_gamma, ones):
+    A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
+    return torch.softmax(A.view(-1), dim=0)
+
+
+# def phi(lamb, half_lamb_len, gamma, M_matrix_over_gamma, b, optimizer=None, device='cpu'):
+#     if optimizer is not None:
+#         optimizer.zero_grad()
+#     psi = lamb[:half_lamb_len]
+#     eta = lamb[half_lamb_len:]
+#     psi_outer = torch.outer(psi, torch.ones(len(psi), device=device))
+#     eta_outer = torch.outer(torch.ones(len(eta), device=device), eta)
+#     lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
+#     under_exp_vector = (lamb_factor_over_gamma - M_matrix_over_gamma).T.reshape(-1)
+#     return gamma * torch.logsumexp(under_exp_vector, dim=0) - lamb @ b
+
+# def phi_nazar(gamma, lamb, C, n, one, p, q):
+#     A = (-C / gamma + torch.outer(lamb[:n], one) + torch.outer(one, lamb[n:]))
+#     a = A.max()
+#     A -= a
+#     s = a + torch.log(torch.exp(A).sum())
+#     return gamma * (-lamb[:n].dot(p) - lamb[n:].dot(q) + s)
+# 
+# def phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=None, device='cpu'):
+#     A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
+#     a = A.max()
+#     A -= a
+#     s = a + torch.log(torch.exp(A).sum())
+#     return gamma * (-lamb[:n].dot(p) - lamb[n:].dot(q) + s)
+
+def phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=None):
+    if optimizer is not None:
+        optimizer.zero_grad()
+    A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
+    s = torch.logsumexp(A.view(-1), dim=0)
+    return gamma * (-lamb[:n].dot(p) - lamb[n:].dot(q) + s)
 
 
 # just in case
-def grad_phi(lamb, M_matrix_over_gamma, A_matrix, b):
-    half_lamb_len = int(len(lamb) / 2)
-    psi = lamb[:half_lamb_len]
-    eta = lamb[half_lamb_len:]
-    psi_outer = np.outer(psi, np.ones(len(psi)))
-    eta_outer = np.outer(np.ones(len(eta)), eta)
-    lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
-    exp_matrix = np.exp(lamb_factor_over_gamma - M_matrix_over_gamma)
-    exp_matrix_columns = np.hsplit(exp_matrix, exp_matrix.shape[1])
-    assert len(exp_matrix_columns) == exp_matrix.shape[1]
-    exp_matrix_vector = np.vstack(exp_matrix_columns)
+def grad_phi(lamb, M_matrix_over_gamma, A_matrix, b, ones):
+    exp_matrix = np.exp(torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]) - M_matrix_over_gamma)
+    exp_matrix_vector = exp_matrix.T.reshape(-1)
     
     numerator = np.sum(exp_matrix_vector.reshape(-1) * A_matrix, axis=1)
     denominator = exp_matrix.sum()
@@ -83,33 +103,54 @@ def f(x, M_matrix, gamma, device='cpu'):
     x_copy = x.detach().clone().to(device)
     x_copy_under_log = x_copy.clone()
     # TODO: check
-    x_copy_under_log[x_copy == 0.] = 1e-6
+    x_copy_under_log[x_copy == 0.] = 1
 
-    M_matrix_splitted = M_matrix.hsplit(M_matrix.shape[1])
-    M_matrix_to_vector = torch.vstack(M_matrix_splitted).view(-1)
+    M_matrix_to_vector = M_matrix.view(-1)  # M is symmetric
     return (M_matrix_to_vector * x_copy).sum() + gamma * (x_copy * torch.log(x_copy_under_log)).sum()
 
 
-def optimize(optimizer, closure, eps, M_matrix, gamma, max_steps=100, device='cpu'):
+def B_round(x, p_ref, q_ref, ones):
+    r = p_ref / x.dot(ones)
+    r[r>1] = 1.
+    F = np.diag(r).dot(x)
+    c = q_ref / (x.T).dot(ones)
+    c[c>1] = 1.
+    F = F.dot(np.diag(c))
+    err_r = p_ref - F.dot(ones)
+    err_c = q_ref - (F.T).dot(ones)
+    return F + np.outer(err_r, err_c) / abs(err_r).sum()
+
+
+def optimize(optimizer, closure, eps, M_matrix, A_matrix, gamma, b, max_steps=100, device='cpu'):
     i = 1
     while True:
         optimizer.step(closure)
 
         with torch.no_grad():
             x_hat = optimizer.state['default']['x_hat'][0]
-            lamb = optimizer.param_groups[0]['params'][0]
             phi_value = closure()
             f_value = f(x_hat, M_matrix, gamma, device)
-            criterion = abs(phi_value + f_value)
 
-            print('\n'.join(
-                [
-                    f'Step #{i}, criterion={criterion}, phi={phi_value}, f={f_value}',
-                    f'lambda={lamb.detach()}',
-                    f'x_hat={x_hat.detach()}'
-                ]), end='\n\n')
+            cr_1 = abs(phi_value + f_value)
+            cr_2 = torch.norm(A_matrix @ x_hat - b)
+            if i == 0:
+                init_cr_1 = cr_1
+                init_cr_2 = cr_2
+            clear_output(wait=True)
+            print('\n'.join([
+                f'Step #{k + 1}',
+                f'cr_1: {init_cr_1} -> {cr_1}',
+                f'cr_2: {init_cr_2} -> {cr_2}'
+            ]))
 
-            if criterion < eps or i == max_steps:
+            # print('\n'.join(
+            #     [
+            #         f'Step #{i}, criterion={criterion}, phi={phi_value}, f={f_value}',
+            #         f'lambda={lamb.detach()}',
+            #         f'x_hat={x_hat.detach()}'
+            #     ]), end='\n\n')
+
+            if cr_1 < eps and cr_2 < eps or i == max_steps:
                 break
 
             i += 1
@@ -123,20 +164,25 @@ def calculate_A_matrix(n):
         ]) for i in trange(n, desc='Building matrix A')]
     )
     A = torch.vstack((A, vectors))
-    return A
+    return A.double()
 
 
-def calculate_lipschitz_constant(n, gamma, p_order=3, device='cpu'):
-    A = calculate_A_matrix(n).to(device)
-    A_A_T = A @ A.T
+def calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device='cpu'):
+    if A_A_T is None:
+        A_matrix = calculate_A_matrix(n).to(device)
+        A_A_T = A_matrix @ A_matrix.T
+    else:
+        A_A_T = A_A_T.to(device)
     _, s, _ = torch.svd(A_A_T, compute_uv=False)
     if p_order == 3:
         return s.max() ** 2 * 15 / gamma ** 3
+    elif p_order == 1:
+        return s.max() / gamma
     else:
         raise NotImplementedError(f'Lipschitz constant calculation for p={p_order} is not implemented!')
 
 
-def run_experiment(M_p, gamma, eps, image_index=0, max_steps=100, device='cpu'):
+def run_experiment(M_p, gamma, eps, A_matrix=None, image_index=0, max_steps=100, device='cpu'):
     images, labels = load_data()
     n = len(images[0])
     m = int(np.sqrt(n))
@@ -145,6 +191,9 @@ def run_experiment(M_p, gamma, eps, image_index=0, max_steps=100, device='cpu'):
     M_matrix = calculate_M_matrix(m)
     M_matrix = M_matrix.to(device)
     M_matrix_over_gamma = M_matrix / gamma
+
+    if A_matrix is None:
+        A_matrix = calculate_A_matrix(n).to(device)
 
     # experiments were done for
     p_list = [34860, 31226, 239, 37372, 17390]
@@ -155,22 +204,24 @@ def run_experiment(M_p, gamma, eps, image_index=0, max_steps=100, device='cpu'):
 
     epsp = eps
     p, q = mnist(epsp, p_list[image_index], q_list[image_index], images, n)
-    b = torch.cat((torch.tensor(p), torch.tensor(q)))
-    b = b.to(device)
+    p = torch.tensor(p, device=device)
+    q = torch.tensor(q, device=device)
+    b = torch.cat((p, q))
 
     lamb = torch.zeros(n * 2, dtype=torch.double, requires_grad=True, device=device)
     # lamb = torch.tensor([1e-6] * (n * 2), dtype=torch.double, requires_grad=True)
     half_lamb_len = int(len(lamb) / 2)
 
+    ones = torch.ones(n, device=device)
     optimizer = PrimalDualAccelerated(
         [lamb],
         M_p=M_p,
         p_order=torch.tensor(3, device=device),
         eps=0.01,
-        calculate_primal_var=lambda lamb: calculate_x(lamb, half_lamb_len, gamma, M_matrix_over_gamma, device)
+        calculate_primal_var=lambda lamb: calculate_x(lamb, n, M_matrix_over_gamma, ones)
     )
-    closure = lambda: phi(lamb, optimizer, half_lamb_len, gamma, M_matrix_over_gamma, b, device)
-    optimize(optimizer, closure, eps, M_matrix, gamma, max_steps, device)
+    closure = lambda: phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer)
+    optimize(optimizer, closure, eps, M_matrix, A_matrix, gamma, b, max_steps, device)
     return optimizer
 
 
