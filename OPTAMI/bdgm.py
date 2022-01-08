@@ -108,9 +108,9 @@ class BDGM(Optimizer):
             # Computation cycle that solve subproblem by gradient descent
             k = 0
             if torch.cuda.is_available():
-                norm_vk = torch.tensor([0.], dtype=torch.double).cuda()
-                norm_g_phi = torch.tensor([100000000.], dtype=torch.double).cuda()
-                grad_vk_norm = torch.tensor([100000000.], dtype=torch.double).cuda()
+                norm_vk = torch.tensor([0.], dtype=torch.double, device=list(params)[0].device)
+                norm_g_phi = torch.tensor([100000000.], dtype=torch.double, device=list(params)[0].device)
+                grad_vk_norm = torch.tensor([100000000.], dtype=torch.double, device=list(params)[0].device)
             else:
                 norm_vk = torch.tensor([0.], dtype=torch.double)
                 norm_g_phi = torch.tensor([100000000.], dtype=torch.double)
