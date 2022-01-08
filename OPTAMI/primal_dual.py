@@ -28,7 +28,7 @@ class PrimalDualAccelerated(Optimizer):
         M = M_p * (p_order + 2)
         M_squared, M_p_squared = M ** 2, M_p ** 2
 
-        C = p_order / 2 * torch.sqrt((p_order + 1) / (p_order - 1) * (M_squared - M_p_squared))
+        C = p_order / 2 * ((p_order + 1) / (p_order - 1) * (M_squared - M_p_squared)) ** 0.5
         A_factor = ((p_order - 1) * (M_squared - M_p_squared) /
                     (4 * (p_order + 1) * p_order ** 2 * M_squared)) ** (p_order / 2)
 
@@ -67,7 +67,7 @@ class PrimalDualAccelerated(Optimizer):
             # grad_phi_k.append(param_copy) # since we won't need \grad \phi(\lambda_0)
         state['x_hat'] = []
         state['grad_phi_k'] = grad_phi_k
-
+        state['phi_next'] = None
         state['A_k'] = [0.0]
 
     def step(self, closure=None):
@@ -115,9 +115,9 @@ class PrimalDualAccelerated(Optimizer):
         optimizer.step(closure)
 
         # step 7 (since we'll need this function only on step 3 on next k,
-        #   here we only calculate \nabla \phi(\lambda_{k + 1})
+        #   here we only calculate \phi(\lambda_{k + 1}) and \nabla \phi(\lambda_{k + 1})
         # print('Step 7: Computation of \\nabla \\phi(\\lambda_{k + 1}...')
-        self._calculate_closure_grad(closure, params)
+        self._calculate_closure_and_its_grad(closure, params)
 
         # step 8
         # print('Step 8: Computation of \\hat x_{k + 1}...')
@@ -166,20 +166,21 @@ class PrimalDualAccelerated(Optimizer):
             for i, param in enumerate(params):
                 param.mul_(A_over_A_next).add_(v[i], alpha=1 - A_over_A_next)
 
-    def _calculate_closure_grad(self, closure, params):
+    def _calculate_closure_and_its_grad(self, closure, params):
         state = self.state['default']
         outputs = closure()
         grad_phi_next = torch.autograd.grad(outputs=outputs, inputs=params, retain_graph=False)
+        state['phi_next'] = outputs
         state['grad_phi_k'].append(grad_phi_next)
 
     def _calculate_x_hat_next(self, k, A_over_A_next, params):
         for i, param in enumerate(params):
-            x = self._calculate_primal_var(param)
+            X_matrix, _, _ = self._calculate_primal_var(param)
             state = self.state['default']
             if k == 0:
-                x_hat_next = x  # A = 0
-                state['x_hat'].append(x_hat_next)
+                X_hat_matrix_next = X_matrix  # A = 0
+                state['x_hat'].append(X_hat_matrix_next)
             else:
-                x_hat = state['x_hat'][i]
-                x_hat_next = (1 - A_over_A_next) * x + A_over_A_next * x_hat
-                state['x_hat'][i] = x_hat_next
+                X_hat_matrix = state['x_hat'][i]
+                X_hat_matrix_next = (1 - A_over_A_next) * X_matrix + A_over_A_next * X_hat_matrix
+                state['x_hat'][i] = X_hat_matrix_next
