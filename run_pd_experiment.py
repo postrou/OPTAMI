@@ -173,6 +173,7 @@ def optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps
                     break
 
             i += 1
+    return i, cr_1, cr_2
 
 
 def run_experiment(M_p, gamma, eps, image_index=0, max_steps=100, device='cpu'):
@@ -215,8 +216,8 @@ def run_experiment(M_p, gamma, eps, image_index=0, max_steps=100, device='cpu'):
     )
     closure = lambda: phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=optimizer)
     round_function = lambda X_matrix: B_round(X_matrix, p_ref, q_ref, ones)
-    optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps, device)
-    return optimizer
+    i, cr_1, cr_2 = optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps, device)
+    return optimizer, i, cr_1, cr_2
 
 
 if __name__ == '__main__':
