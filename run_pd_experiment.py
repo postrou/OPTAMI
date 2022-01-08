@@ -51,9 +51,18 @@ def calculate_M_matrix(m):
 #     return torch.softmax(under_exp_vector, dim=0)
 
 
+# def calculate_x(lamb, n, M_matrix_over_gamma, ones):
+#     A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
+#     return torch.softmax(A.view(-1), dim=0)
+
+
 def calculate_x(lamb, n, M_matrix_over_gamma, ones):
-    A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
-    return torch.softmax(A.view(-1), dim=0)
+    log_X = -M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])
+    max_log_X = log_X.max()
+    log_X_stable = log_X - max_log_X
+    X_stable = torch.exp(log_X_stable)
+    X_stable_sum = X_stable.sum()
+    return X_stable / X_stable_sum, X_stable_sum, max_log_X
 
 
 # def phi(lamb, half_lamb_len, gamma, M_matrix_over_gamma, b, optimizer=None, device='cpu'):
@@ -81,11 +90,14 @@ def calculate_x(lamb, n, M_matrix_over_gamma, ones):
 #     s = a + torch.log(torch.exp(A).sum())
 #     return gamma * (-lamb[:n].dot(p) - lamb[n:].dot(q) + s)
 
-def phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=None):
+def phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, X_stable_sum=None, max_log_X=None, optimizer=None):
     if optimizer is not None:
         optimizer.zero_grad()
-    A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
-    s = torch.logsumexp(A.view(-1), dim=0)
+    if X_stable_sum is None or max_log_X is None:
+        A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
+        s = torch.logsumexp(A.view(-1), dim=0)
+    else:
+        s = torch.log(X_stable_sum) + max_log_X
     return gamma * (-lamb[:n].dot(p) - lamb[n:].dot(q) + s)
 
 
@@ -105,20 +117,21 @@ def f(x, M_matrix, gamma, device='cpu'):
     # TODO: check
     x_copy_under_log[x_copy == 0.] = 1
 
-    M_matrix_to_vector = M_matrix.view(-1)  # M is symmetric
-    return (M_matrix_to_vector * x_copy).sum() + gamma * (x_copy * torch.log(x_copy_under_log)).sum()
+#     M_matrix_to_vector = M_matrix.view(-1)  # M is symmetric
+#     return (M_matrix_to_vector * x_copy).sum() + gamma * (x_copy * torch.log(x_copy_under_log)).sum()
+    return (M_matrix * x_copy).sum() + gamma * (x_copy * torch.log(x_copy_under_log)).sum()
 
 
 def B_round(x, p_ref, q_ref, ones):
-    r = p_ref / x.dot(ones)
+    r = p_ref / (x @ ones)
     r[r>1] = 1.
-    F = np.diag(r).dot(x)
-    c = q_ref / (x.T).dot(ones)
+    F = torch.diag(r) @ x
+    c = q_ref / (x.T @ ones)
     c[c>1] = 1.
-    F = F.dot(np.diag(c))
-    err_r = p_ref - F.dot(ones)
-    err_c = q_ref - (F.T).dot(ones)
-    return F + np.outer(err_r, err_c) / abs(err_r).sum()
+    F = F @ torch.diag(c)
+    err_r = p_ref - (F @ ones)
+    err_c = q_ref - (F.T @ ones)
+    return F + torch.outer(err_r, err_c) / torch.abs(err_r).sum()
 
 
 def optimize(optimizer, closure, eps, M_matrix, A_matrix, gamma, b, max_steps=100, device='cpu'):
