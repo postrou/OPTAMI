@@ -89,7 +89,6 @@ def grad_phi(lamb, M_matrix_over_gamma, A_matrix, b, ones):
 def f(x, M_matrix, gamma, device='cpu'):
     x_copy = x.detach().clone().to(device)
     x_copy_under_log = x_copy.clone()
-    # TODO: check
     x_copy_under_log[x_copy == 0.] = 1
 
 #     M_matrix_to_vector = M_matrix.view(-1)  # M is symmetric
@@ -142,7 +141,7 @@ def optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps
 
         with torch.no_grad():
             X_hat_matrix_next = optimizer.state['default']['x_hat'][0]
-            phi_value = optimizer.state['default']['phi_next']
+            phi_value = optimizer.state['default']['phi_next'][0]
             f_value = f(X_hat_matrix_next, M_matrix, gamma, device)
 
             cr_1 = abs(phi_value + f_value)

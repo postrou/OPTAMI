@@ -32,11 +32,15 @@ class PrimalDualAccelerated(Optimizer):
         A_factor = ((p_order - 1) * (M_squared - M_p_squared) /
                     (4 * (p_order + 1) * p_order ** 2 * M_squared)) ** (p_order / 2)
 
+        p_fact = ttv.factorial(p_order)
+        step_3_fst_factor = (C / p_fact) ** (1 / p_order)
+
         defaults = dict(
             M_p=M_p,
             M=M,
             C=C,
             A_factor=A_factor,
+            step_3_fst_factor=step_3_fst_factor,
             eps=eps,
             p_order=p_order,
             subsolver=subsolver,
@@ -57,16 +61,11 @@ class PrimalDualAccelerated(Optimizer):
 
         # filling state
         state = self.state['default']
-        grad_phi_k = [(None for _ in params)]
         for param in params:
             param_copy = param.clone().detach()
             assert len(param_copy.shape) <= 2, "May be some troubles with tensor of higher order"
-            # if len(param_copy.shape) == 2:
-
-            # assert torch.all(param_copy == 0), 'Initial point should be all zeros!'
-            # grad_phi_k.append(param_copy) # since we won't need \grad \phi(\lambda_0)
         state['x_hat'] = []
-        state['grad_phi_k'] = grad_phi_k
+        state['grad_phi_k_sum'] = [torch.zeros_like(param) for param in params]
         state['phi_next'] = None
         state['A_k'] = [0.0]
 
@@ -117,7 +116,7 @@ class PrimalDualAccelerated(Optimizer):
         # step 7 (since we'll need this function only on step 3 on next k,
         #   here we only calculate \phi(\lambda_{k + 1}) and \nabla \phi(\lambda_{k + 1})
         # print('Step 7: Computation of \\nabla \\phi(\\lambda_{k + 1}...')
-        self._calculate_closure_and_its_grad(closure, params)
+        self._calculate_closure_and_its_grad(closure, A, A_next, params)
 
         # step 8
         # print('Step 8: Computation of \\hat x_{k + 1}...')
@@ -131,33 +130,19 @@ class PrimalDualAccelerated(Optimizer):
     def _estim_seq_subproblem(self, k, param_group):
         params = param_group['params']
         p_order = param_group['p_order']
-        C = param_group['C']
+        fst_factor = param_group['step_3_fst_factor']
 
         state = self.state['default']
-        A_k = state['A_k']
-        grad_phi_k = state['grad_phi_k']
+        grad_phi_k_sum = state['grad_phi_k_sum']
 
         if k == 0:
             return [torch.zeros_like(param) for param in params]
 
-        p_fact = ttv.factorial(p_order)
-        one_over_p = 1 / p_order
-        # fst_factor = (p_fact / C) ** one_over_p
-        fst_factor = p_fact / C
-
         results = [torch.empty_like(param) for param in params]
         for i, param in enumerate(params):
-            grad_sum = torch.zeros_like(param)
-            for j in range(1, k + 1):
-                A = A_k[j]
-                A_prev = A_k[j - 1]
-                grad_phi = grad_phi_k[j][i]
-                grad_sum += (A - A_prev) * grad_phi
-
-            # snd_factor = grad_sum / (grad_sum.norm() ** (1 - one_over_p))
+            grad_sum = grad_phi_k_sum[i]
             grad_sum_norm = grad_sum.norm()
-            snd_factor = grad_sum / grad_sum_norm
-            fst_factor = (fst_factor * grad_sum_norm) ** one_over_p
+            snd_factor = grad_sum / grad_sum_norm ** (1 - 1 / p_order)
             results[i] = -fst_factor * snd_factor
         return results
 
@@ -166,12 +151,18 @@ class PrimalDualAccelerated(Optimizer):
             for i, param in enumerate(params):
                 param.mul_(A_over_A_next).add_(v[i], alpha=1 - A_over_A_next)
 
-    def _calculate_closure_and_its_grad(self, closure, params):
+    def _calculate_closure_and_its_grad(self, closure, A, A_next, params):
         state = self.state['default']
         outputs = closure()
         grad_phi_next = torch.autograd.grad(outputs=outputs, inputs=params, retain_graph=False)
-        state['phi_next'] = outputs
-        state['grad_phi_k'].append(grad_phi_next)
+        if type(outputs) == list:
+            state['phi_next'] = outputs
+        else:
+            state['phi_next'] = [outputs]
+
+        # add new gradient to the sum
+        for i, grad in enumerate(grad_phi_next):
+            state['grad_phi_k_sum'][i] += (A_next - A) * grad_phi_next[0]
 
     def _calculate_x_hat_next(self, k, A_over_A_next, params):
         for i, param in enumerate(params):
