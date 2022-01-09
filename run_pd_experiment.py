@@ -176,7 +176,7 @@ def optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps
     return i, cr_1, cr_2
 
 
-def run_experiment(M_p, gamma, eps, image_index=0, max_steps=100, device='cpu'):
+def run_experiment(M_p, gamma, eps, image_index=0, optimizer=None, max_steps=100, device='cpu'):
     images, labels = load_data()
     n = len(images[0])
     m = int(np.sqrt(n))
@@ -204,16 +204,21 @@ def run_experiment(M_p, gamma, eps, image_index=0, max_steps=100, device='cpu'):
     p_ref = torch.tensor(p_ref, device=device, dtype=torch.double)
     q_ref = torch.tensor(q_ref, device=device, dtype=torch.double)
 
-    lamb = torch.zeros(n * 2, dtype=torch.double, requires_grad=True, device=device)
 
     ones = torch.ones(n, device=device, dtype=torch.double)
-    optimizer = PrimalDualAccelerated(
-        [lamb],
-        M_p=M_p,
-        p_order=torch.tensor(3, device=device),
-        eps=0.01,
-        calculate_primal_var=lambda lamb: calculate_x(lamb, n, M_matrix_over_gamma, ones)
-    )
+    
+    if optimizer is None:
+        lamb = torch.zeros(n * 2, dtype=torch.double, requires_grad=True, device=device)
+        optimizer = PrimalDualAccelerated(
+            [lamb],
+            M_p=M_p,
+            p_order=torch.tensor(3, device=device),
+            eps=0.01,
+            calculate_primal_var=lambda lamb: calculate_x(lamb, n, M_matrix_over_gamma, ones)
+        )
+    else:
+        lamb = optimizer.param_groups[0]['params'][0]
+        
     closure = lambda: phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=optimizer)
     round_function = lambda X_matrix: B_round(X_matrix, p_ref, q_ref, ones)
     i, cr_1, cr_2 = optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps, device)
