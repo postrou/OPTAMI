@@ -162,7 +162,7 @@ class PrimalDualAccelerated(Optimizer):
 
         # add new gradient to the sum
         for i, grad in enumerate(grad_phi_next):
-            state['grad_phi_k_sum'][i] += (A_next - A) * grad_phi_next[0]
+            state['grad_phi_k_sum'][i] += (A_next - A) * grad
 
     def _calculate_x_hat_next(self, k, A_over_A_next, params):
         for i, param in enumerate(params):
