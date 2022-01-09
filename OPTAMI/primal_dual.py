@@ -122,6 +122,8 @@ class PrimalDualAccelerated(Optimizer):
         # print('Step 8: Computation of \\hat x_{k + 1}...')
         self._calculate_x_hat_next(k, A_over_A_next, params)
 
+        state['k'] += 1
+
     def _calculate_A(self, k, param_group):
         A_factor = param_group['A_factor']
         p_order = param_group['p_order']

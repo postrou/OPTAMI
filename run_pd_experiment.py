@@ -227,7 +227,7 @@ def run_experiment(M_p, gamma, eps, image_index=0, optimizer=None, max_steps=Non
 
 if __name__ == '__main__':
     n = 784
-    device = 'cuda:1'
+    device = 'cpu'
 
     A_A_T_path = 'A_A_T.pkl'
     if not os.path.exists(A_A_T_path):
@@ -240,14 +240,6 @@ if __name__ == '__main__':
     eps = 0.02
     gamma = 0.35
     image_index = 0
-
-    A_A_T_path = 'A_A_T.pkl'
-    if not os.path.exists(A_A_T_path):
-        A_matrix = calculate_A_matrix(n).to(device)
-        A_A_T = A_matrix @ A_matrix.T
-        torch.save(A_A_T, A_A_T_path)
-    else:
-        A_A_T = torch.load(A_A_T_path)
 
     M_p = calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=A_A_T, device=device)
 
