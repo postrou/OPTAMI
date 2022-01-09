@@ -33,7 +33,7 @@ class PrimalDualAccelerated(Optimizer):
                     (4 * (p_order + 1) * p_order ** 2 * M_squared)) ** (p_order / 2)
 
         p_fact = ttv.factorial(p_order)
-        step_3_fst_factor = (C / p_fact) ** (1 / p_order)
+        step_3_fst_factor = (p_fact / C) ** (1 / p_order)
 
         defaults = dict(
             M_p=M_p,
@@ -144,7 +144,6 @@ class PrimalDualAccelerated(Optimizer):
         for i, param in enumerate(params):
             grad_sum = grad_phi_k_sum[i]
             grad_sum_norm = grad_sum.norm()
-            print(grad_sum_norm)
             snd_factor = grad_sum / grad_sum_norm ** (1 - 1 / p_order)
             results[i] = -fst_factor * snd_factor
         return results
