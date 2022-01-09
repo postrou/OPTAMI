@@ -1,3 +1,5 @@
+import os
+
 import torch
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -116,7 +118,7 @@ def calculate_A_matrix(n):
         ]) for i in trange(n, desc='Building matrix A')]
     )
     A = torch.vstack((A, vectors))
-    return A.double()
+    return A
 
 
 def calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device='cpu'):
@@ -203,7 +205,6 @@ def run_experiment(M_p, gamma, eps, image_index=0, optimizer=None, max_steps=Non
     p_ref = torch.tensor(p_ref, device=device, dtype=torch.double)
     q_ref = torch.tensor(q_ref, device=device, dtype=torch.double)
 
-
     ones = torch.ones(n, device=device, dtype=torch.double)
     
     if optimizer is None:
@@ -225,12 +226,29 @@ def run_experiment(M_p, gamma, eps, image_index=0, optimizer=None, max_steps=Non
 
 
 if __name__ == '__main__':
-    eps = 1e-3
     n = 784
+    device = 'cuda:1'
+
+    A_A_T_path = 'A_A_T.pkl'
+    if not os.path.exists(A_A_T_path):
+        A_matrix = calculate_A_matrix(n).to(device)
+        A_A_T = A_matrix @ A_matrix.T
+        torch.save(A_A_T, A_A_T_path)
+    else:
+        A_A_T = torch.load(A_A_T_path)
+
+    eps = 0.02
+    gamma = 0.35
     image_index = 0
-    gamma = 0.9
 
-    print(f'Calculating Lipschitz constant...')
-    M_p = calculate_lipschitz_constant(n, gamma, p_order=3)
+    A_A_T_path = 'A_A_T.pkl'
+    if not os.path.exists(A_A_T_path):
+        A_matrix = calculate_A_matrix(n).to(device)
+        A_A_T = A_matrix @ A_matrix.T
+        torch.save(A_A_T, A_A_T_path)
+    else:
+        A_A_T = torch.load(A_A_T_path)
 
-    run_experiment(M_p, gamma, eps, image_index)
+    M_p = calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=A_A_T, device=device)
+
+    run_experiment(M_p, gamma, eps, image_index, device=device)

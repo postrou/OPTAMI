@@ -67,7 +67,8 @@ class PrimalDualAccelerated(Optimizer):
         state['x_hat'] = []
         state['grad_phi_k_sum'] = [torch.zeros_like(param) for param in params]
         state['phi_next'] = None
-        state['A_k'] = [0.0]
+        state['A'] = 0.0
+        state['k'] = 0
 
     def step(self, closure=None):
         if closure is None:
@@ -80,9 +81,8 @@ class PrimalDualAccelerated(Optimizer):
         params = group['params']
         M = group['M']
         state = self.state['default']
-        A_k = state['A_k']
-        A = A_k[-1]
-        k = len(A_k) - 1
+        A = state['A']
+        k = state['k']
 
         # step 3
         # print('Step 3: Computation of v_k...')
@@ -91,7 +91,7 @@ class PrimalDualAccelerated(Optimizer):
         # step 4 (we won't need a)
         # print('Step 4: Computation of A_{k + 1}...')
         A_next = self._calculate_A(k + 1, group)
-        A_k.append(A_next)
+        state['A'] = A_next
 
         # step 5
         # print('Step 5: Computation of y_k...')
@@ -142,6 +142,7 @@ class PrimalDualAccelerated(Optimizer):
         for i, param in enumerate(params):
             grad_sum = grad_phi_k_sum[i]
             grad_sum_norm = grad_sum.norm()
+            print(grad_sum_norm)
             snd_factor = grad_sum / grad_sum_norm ** (1 - 1 / p_order)
             results[i] = -fst_factor * snd_factor
         return results
