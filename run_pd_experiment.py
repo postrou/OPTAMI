@@ -175,7 +175,7 @@ def optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps
     return i, cr_1, cr_2
 
 
-def run_experiment(M_p, gamma, eps, image_index=0, optimizer=None, max_steps=100, device='cpu'):
+def run_experiment(M_p, gamma, eps, image_index=0, optimizer=None, max_steps=None, device='cpu'):
     images, labels = load_data()
     n = len(images[0])
     m = int(np.sqrt(n))
