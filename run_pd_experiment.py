@@ -1,5 +1,4 @@
 import os
-from time import time
 
 import torch
 import numpy as np
@@ -61,8 +60,8 @@ def calculate_M_matrix(m):
 
 
 #TODO: check
-def calculate_x(lamb, n, M_matrix_over_gamma, gamma, ones):
-    log_X = -M_matrix_over_gamma + torch.outer(lamb[:n], ones) / gamma + torch.outer(ones, lamb[n:]) / gamma
+def calculate_x(lamb, n, M_matrix_over_gamma, ones):
+    log_X = -M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])
     max_log_X = log_X.max()
     log_X_stable = log_X - max_log_X
     X_stable = torch.exp(log_X_stable)
@@ -227,7 +226,7 @@ def run_experiment(M_p, gamma, eps, image_index=0, optimizer=None, max_steps=Non
             M_p=M_p,
             p_order=torch.tensor(3, device=device),
             eps=0.01,
-            calculate_primal_var=lambda lamb: calculate_x(lamb, n, M_matrix_over_gamma, gamma, ones)
+            calculate_primal_var=lambda lamb: calculate_x(lamb, n, M_matrix_over_gamma, ones)
         )
     else:
         lamb = optimizer.param_groups[0]['params'][0]
