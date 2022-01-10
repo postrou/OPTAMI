@@ -5,6 +5,7 @@ import numpy as np
 from scipy.spatial.distance import cdist
 from mnist import MNIST
 from tqdm import trange
+import matplotlib.pylab as plt
 from IPython.display import clear_output
 
 from OPTAMI import *
@@ -124,26 +125,44 @@ def calculate_A_matrix(n):
 
 
 def calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device='cpu'):
-    if A_A_T is None:
-        A_matrix = calculate_A_matrix(n).to(device)
-        A_A_T = A_matrix @ A_matrix.T
-    else:
-        A_A_T = A_A_T.to(device)
-    _, s, _ = torch.svd(A_A_T, compute_uv=False)
+#     if A_A_T is None:
+#         A_matrix = calculate_A_matrix(n).to(device)
+#         A_A_T = A_matrix @ A_matrix.T
+#     else:
+#         A_A_T = A_A_T.to(device)
+#     _, s, _ = torch.svd(A_A_T, compute_uv=False)
+    s = 2 ** 0.5
     if p_order == 3:
-        return s.max() ** 2 * 15 / gamma ** 3
+#         return s.max() ** 2 * 15 / gamma ** 3
+#         return s.max() ** 2 * 15
+        return s ** 4 * 15
     elif p_order == 1:
-        return s.max() / gamma
+#         return s.max() / gamma
+#         return s.max()
+        return s ** 2
     else:
         raise NotImplementedError(f'Lipschitz constant calculation for p={p_order} is not implemented!')
 
 
-def optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps=None, device='cpu'):
+def optimize(
+        optimizer,
+        closure,
+        round_function,
+        eps,
+        M_matrix,
+        gamma,
+        max_steps=None,
+        fgm_cr_1_list=None,
+        fgm_cr_2_list=None,
+        device='cpu'
+):
     i = 0
     
     import time
     start_time = time.time()
     
+    cr_1_list = [] 
+    cr_2_list = []
     while True:
         optimizer.step(closure)
         torch.cuda.empty_cache()
@@ -155,6 +174,8 @@ def optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps
 
             cr_1 = abs(phi_value + f_value)
             cr_2 = (M_matrix * (round_function(X_hat_matrix_next) - X_hat_matrix_next)).sum()
+            cr_1_list.append(cr_1.detach().clone().item())
+            cr_2_list.append(cr_2.detach().clone().item())
             # cr_2 = torch.norm(A_matrix @ x_hat - b)
             if i == 0:
                 init_cr_1 = cr_1
@@ -170,6 +191,21 @@ def optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps
                 f'cr_2: {init_cr_2} -> {cr_2}',
                 f'time={time_h}h, {time_m}m, {time_s}s'
             ]))
+            fig, ax = plt.subplots(1, 2, figsize=(20, 8))
+            ax[0].plot(fgm_cr_1_list, label='FGM')
+            ax[0].plot(cr_1_list, label='Tensor Method')
+            ax[0].set_xlabel('iter')
+            ax[0].set_ylabel('Dual gap')
+            ax[0].set_yscale('log')
+            ax[0].legend()
+
+            ax[1].plot(fgm_cr_2_list, label='FGM')
+            ax[1].plot(cr_2_list, label='Tensor Method')
+            ax[1].set_xlabel('iter')
+            ax[1].set_ylabel('Linear constraints')
+            ax[1].set_yscale('log')
+            ax[1].legend()
+            plt.show()
 
             # print('\n'.join(
             #     [
@@ -189,7 +225,17 @@ def optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps
     return i, cr_1, cr_2
 
 
-def run_experiment(M_p, gamma, eps, image_index=0, optimizer=None, max_steps=None, device='cpu'):
+def run_experiment(
+        M_p,
+        gamma,
+        eps,
+        image_index=0,
+        optimizer=None,
+        max_steps=None,
+        fgm_cr_1_list=None,
+        fgm_cr_2_list=None,
+        device='cpu'
+):
     images, labels = load_data()
     n = len(images[0])
     m = int(np.sqrt(n))
@@ -233,7 +279,18 @@ def run_experiment(M_p, gamma, eps, image_index=0, optimizer=None, max_steps=Non
         
     closure = lambda: phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=optimizer)
     round_function = lambda X_matrix: B_round(X_matrix, p_ref, q_ref, ones)
-    i, cr_1, cr_2 = optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps, device)
+    i, cr_1, cr_2 = optimize(
+        optimizer,
+        closure,
+        round_function,
+        eps,
+        M_matrix,
+        gamma,
+        max_steps,
+        fgm_cr_1_list,
+        fgm_cr_2_list,
+        device
+    )
     return optimizer, i, cr_1, cr_2
 
 
