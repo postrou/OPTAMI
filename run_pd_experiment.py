@@ -55,14 +55,13 @@ def calculate_M_matrix(m):
 #     return torch.softmax(under_exp_vector, dim=0)
 
 
-# def calculate_x(lamb, n, M_matrix_over_gamma, ones):
+# def calculate_x_old(lamb, n, M_matrix_over_gamma, ones):
 #     A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
 #     return torch.softmax(A.view(-1), dim=0)
 
 
-#TODO: check
-def calculate_x(lamb, n, M_matrix_over_gamma, ones):
-    log_X = -M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])
+def calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones):
+    log_X = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
     max_log_X = log_X.max()
     log_X_stable = log_X - max_log_X
     X_stable = torch.exp(log_X_stable)
@@ -74,7 +73,7 @@ def phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, X_stable_sum=None, max_
     if optimizer is not None:
         optimizer.zero_grad()
     if X_stable_sum is None or max_log_X is None:
-        A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
+        A = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
         s = torch.logsumexp(A.view(-1), dim=0)
     else:
         s = torch.log(X_stable_sum) + max_log_X
@@ -135,11 +134,11 @@ def calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device='cpu'):
     if p_order == 3:
 #         return s.max() ** 2 * 15 / gamma ** 3
 #         return s.max() ** 2 * 15
-        return s ** 4 * 15
+        return s ** 4 * 15 / gamma ** 3
     elif p_order == 1:
 #         return s.max() / gamma
 #         return s.max()
-        return s ** 2
+        return s ** 2 / gamma
     else:
         raise NotImplementedError(f'Lipschitz constant calculation for p={p_order} is not implemented!')
 
@@ -192,14 +191,16 @@ def optimize(
                 f'time={time_h}h, {time_m}m, {time_s}s'
             ]))
             fig, ax = plt.subplots(1, 2, figsize=(20, 8))
-            ax[0].plot(fgm_cr_1_list, label='FGM')
+            if fgm_cr_1_list is not None:
+                ax[0].plot(fgm_cr_1_list, label='FGM')
             ax[0].plot(cr_1_list, label='Tensor Method')
             ax[0].set_xlabel('iter')
             ax[0].set_ylabel('Dual gap')
             ax[0].set_yscale('log')
             ax[0].legend()
 
-            ax[1].plot(fgm_cr_2_list, label='FGM')
+            if fgm_cr_2_list is not None:
+                ax[1].plot(fgm_cr_2_list, label='FGM')
             ax[1].plot(cr_2_list, label='Tensor Method')
             ax[1].set_xlabel('iter')
             ax[1].set_ylabel('Linear constraints')
@@ -272,7 +273,7 @@ def run_experiment(
             M_p=M_p,
             p_order=torch.tensor(3, device=device),
             eps=0.01,
-            calculate_primal_var=lambda lamb: calculate_x(lamb, n, M_matrix_over_gamma, ones)
+            calculate_primal_var=lambda lamb: calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones)
         )
     else:
         lamb = optimizer.param_groups[0]['params'][0]
@@ -298,18 +299,18 @@ if __name__ == '__main__':
     n = 784
     device = 'cpu'
 
-    A_A_T_path = 'A_A_T.pkl'
-    if not os.path.exists(A_A_T_path):
-        A_matrix = calculate_A_matrix(n).to(device)
-        A_A_T = A_matrix @ A_matrix.T
-        torch.save(A_A_T, A_A_T_path)
-    else:
-        A_A_T = torch.load(A_A_T_path)
+    # A_A_T_path = 'A_A_T.pkl'
+    # if not os.path.exists(A_A_T_path):
+    #     A_matrix = calculate_A_matrix(n).to(device)
+    #     A_A_T = A_matrix @ A_matrix.T
+    #     torch.save(A_A_T, A_A_T_path)
+    # else:
+    #     A_A_T = torch.load(A_A_T_path)
 
     eps = 0.02
     gamma = 0.35
     image_index = 0
 
-    M_p = calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=A_A_T, device=device)
+    M_p = calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device=device)
 
     run_experiment(M_p, gamma, eps, image_index, device=device)
