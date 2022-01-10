@@ -1,4 +1,5 @@
 import os
+from time import time
 
 import torch
 import numpy as np
@@ -8,6 +9,7 @@ from tqdm import trange
 from IPython.display import clear_output
 
 from OPTAMI import *
+
 
 def load_data(path='./data/'):
     mndata = MNIST(path)
@@ -139,8 +141,13 @@ def calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device='cpu'):
 
 def optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps=None, device='cpu'):
     i = 0
+    
+    import time
+    start_time = time.time()
+    
     while True:
         optimizer.step(closure)
+        torch.cuda.empty_cache()
 
         with torch.no_grad():
             X_hat_matrix_next = optimizer.state['default']['x_hat'][0]
@@ -154,10 +161,15 @@ def optimize(optimizer, closure, round_function, eps, M_matrix, gamma, max_steps
                 init_cr_1 = cr_1
                 init_cr_2 = cr_2
             clear_output(wait=True)
+            time_whole = int(time.time() - start_time)
+            time_h = time_whole // 3600
+            time_m = time_whole % 3600 // 60
+            time_s = time_whole % 3600 % 60
             print('\n'.join([
                 f'Step #{i}',
                 f'cr_1: {init_cr_1} -> {cr_1}',
-                f'cr_2: {init_cr_2} -> {cr_2}'
+                f'cr_2: {init_cr_2} -> {cr_2}',
+                f'time={time_h}h, {time_m}m, {time_s}s'
             ]))
 
             # print('\n'.join(
