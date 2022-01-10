@@ -40,8 +40,8 @@ def calculate_M_matrix(m):
     M_matrix = np.arange(m)
     M_matrix = cartesian_product(M_matrix, M_matrix)
     M_matrix = cdist(M_matrix, M_matrix)
-    M_matrix /= np.max(M_matrix)
-#     M_matrix /= np.median(M_matrix)
+    # M_matrix /= np.max(M_matrix)
+    M_matrix /= np.median(M_matrix)
     return torch.tensor(M_matrix, dtype=torch.double)
 
 
@@ -60,9 +60,8 @@ def calculate_M_matrix(m):
 #     return torch.softmax(A.view(-1), dim=0)
 
 
-#TODO: check
-def calculate_x(lamb, n, M_matrix_over_gamma, ones):
-    log_X = -M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])
+def calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones):
+    log_X = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
     max_log_X = log_X.max()
     log_X_stable = log_X - max_log_X
     X_stable = torch.exp(log_X_stable)
@@ -74,7 +73,7 @@ def phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, X_stable_sum=None, max_
     if optimizer is not None:
         optimizer.zero_grad()
     if X_stable_sum is None or max_log_X is None:
-        A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
+        A = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
         s = torch.logsumexp(A.view(-1), dim=0)
     else:
         s = torch.log(X_stable_sum) + max_log_X
@@ -85,7 +84,7 @@ def phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, X_stable_sum=None, max_
 def grad_phi(lamb, M_matrix_over_gamma, A_matrix, b, ones):
     exp_matrix = np.exp(torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]) - M_matrix_over_gamma)
     exp_matrix_vector = exp_matrix.T.reshape(-1)
-    
+
     numerator = np.sum(exp_matrix_vector.reshape(-1) * A_matrix, axis=1)
     denominator = exp_matrix.sum()
     return numerator / denominator - b
@@ -135,11 +134,11 @@ def calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device='cpu'):
     if p_order == 3:
 #         return s.max() ** 2 * 15 / gamma ** 3
 #         return s.max() ** 2 * 15
-        return gamma * s ** 4 * 15
+        return s ** 4 * 15 / gamma ** 3
     elif p_order == 1:
 #         return s.max() / gamma
 #         return s.max()
-        return gamma * s ** 2
+        return s ** 2 / gamma
     else:
         raise NotImplementedError(f'Lipschitz constant calculation for p={p_order} is not implemented!')
 
@@ -157,11 +156,11 @@ def optimize(
         device='cpu'
 ):
     i = 0
-    
+
     import time
     start_time = time.time()
-    
-    cr_1_list = [] 
+
+    cr_1_list = []
     cr_2_list = []
     while True:
         optimizer.step(closure)
@@ -180,8 +179,6 @@ def optimize(
             if i == 0:
                 init_cr_1 = cr_1
                 init_cr_2 = cr_2
-                init_phi = phi_value.item()
-                init_f = f_value.item()
             clear_output(wait=True)
             time_whole = int(time.time() - start_time)
             time_h = time_whole // 3600
@@ -191,27 +188,24 @@ def optimize(
                 f'Step #{i}',
                 f'cr_1: {init_cr_1} -> {cr_1}',
                 f'cr_2: {init_cr_2} -> {cr_2}',
-                f'phi: {init_phi} -> {phi_value.item()}',
-                f'f: {init_f} -> {f_value.item()}',
                 f'time={time_h}h, {time_m}m, {time_s}s'
             ]))
-            fig, ax = plt.subplots(1, 2, figsize=(20, 8))
-            if fgm_cr_1_list is not None:
+            if fgm_cr_1_list is not None and fgm_cr_2_list is not None:
+                fig, ax = plt.subplots(1, 2, figsize=(20, 8))
                 ax[0].plot(fgm_cr_1_list, label='FGM')
-            ax[0].plot(cr_1_list, label='Tensor Method')
-            ax[0].set_xlabel('iter')
-            ax[0].set_ylabel('Dual gap')
-            ax[0].set_yscale('log')
-            ax[0].legend()
+                ax[0].plot(cr_1_list, label='Tensor Method')
+                ax[0].set_xlabel('iter')
+                ax[0].set_ylabel('Dual gap')
+                ax[0].set_yscale('log')
+                ax[0].legend()
 
-            if fgm_cr_2_list is not None:
                 ax[1].plot(fgm_cr_2_list, label='FGM')
-            ax[1].plot(cr_2_list, label='Tensor Method')
-            ax[1].set_xlabel('iter')
-            ax[1].set_ylabel('Linear constraints')
-            ax[1].set_yscale('log')
-            ax[1].legend()
-            plt.show()
+                ax[1].plot(cr_2_list, label='Tensor Method')
+                ax[1].set_xlabel('iter')
+                ax[1].set_ylabel('Linear constraints')
+                ax[1].set_yscale('log')
+                ax[1].legend()
+                plt.show()
 
             # print('\n'.join(
             #     [
@@ -278,7 +272,7 @@ def run_experiment(
             M_p=M_p,
             p_order=torch.tensor(3, device=device),
             eps=0.01,
-            calculate_primal_var=lambda lamb: calculate_x(lamb, n, M_matrix_over_gamma, ones)
+            calculate_primal_var=lambda lamb: calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones)
         )
     else:
         lamb = optimizer.param_groups[0]['params'][0]
