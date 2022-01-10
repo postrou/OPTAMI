@@ -25,7 +25,7 @@ class PrimalDualAccelerated(Optimizer):
         if calculate_primal_var is None:
             raise ValueError('We need function for primal (x) value calculation from lambda (dual) variable')
 
-        M = M_p * (p_order + 2)
+        M = M_p * 2
         M_squared, M_p_squared = M ** 2, M_p ** 2
 
         C = p_order / 2 * ((p_order + 1) / (p_order - 1) * (M_squared - M_p_squared)) ** 0.5
@@ -158,9 +158,9 @@ class PrimalDualAccelerated(Optimizer):
         outputs = closure()
         grad_phi_next = torch.autograd.grad(outputs=outputs, inputs=params, retain_graph=False)
         if type(outputs) == list:
-            state['phi_next'] = outputs
+            state['phi_next'] = outputs.detach().clone()
         else:
-            state['phi_next'] = [outputs]
+            state['phi_next'] = [outputs.detach().clone()]
 
         # add new gradient to the sum
         for i, grad in enumerate(grad_phi_next):
@@ -172,8 +172,8 @@ class PrimalDualAccelerated(Optimizer):
             state = self.state['default']
             if k == 0:
                 X_hat_matrix_next = X_matrix  # A = 0
-                state['x_hat'].append(X_hat_matrix_next)
+                state['x_hat'].append(X_hat_matrix_next.detach().clone())
             else:
                 X_hat_matrix = state['x_hat'][i]
                 X_hat_matrix_next = (1 - A_over_A_next) * X_matrix + A_over_A_next * X_hat_matrix
-                state['x_hat'][i] = X_hat_matrix_next
+                state['x_hat'][i] = X_hat_matrix_next.detach().clone()
