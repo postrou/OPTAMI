@@ -209,7 +209,7 @@ def run_experiment(M_p, gamma, eps, image_index=0, optimizer=None, max_steps=Non
     # x_array = np.linspace(1 / 2e-2, 1 / 4e-4, 6)
     # epslist = 1 / x_array
 
-    epsp = eps
+    epsp = eps / 8
     p, q = mnist(epsp, p_list[image_index], q_list[image_index], images, n)
     p = torch.tensor(p, device=device, dtype=torch.double)
     q = torch.tensor(q, device=device, dtype=torch.double)
