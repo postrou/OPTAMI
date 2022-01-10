@@ -179,6 +179,8 @@ def optimize(
             if i == 0:
                 init_cr_1 = cr_1
                 init_cr_2 = cr_2
+                init_phi_value = phi_value.detach()
+                init_f_value = f_value.item()
             clear_output(wait=True)
             time_whole = int(time.time() - start_time)
             time_h = time_whole // 3600
@@ -188,6 +190,8 @@ def optimize(
                 f'Step #{i}',
                 f'cr_1: {init_cr_1} -> {cr_1}',
                 f'cr_2: {init_cr_2} -> {cr_2}',
+                f'phi: {init_phi_value} -> {phi_value.item()}',
+                f'f: {init_f_value} -> {f_value.item()}',
                 f'time={time_h}h, {time_m}m, {time_s}s'
             ]))
             if fgm_cr_1_list is not None and fgm_cr_2_list is not None:
