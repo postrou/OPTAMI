@@ -40,8 +40,8 @@ def calculate_M_matrix(m):
     M_matrix = np.arange(m)
     M_matrix = cartesian_product(M_matrix, M_matrix)
     M_matrix = cdist(M_matrix, M_matrix)
-    # M_matrix /= np.max(M_matrix)
-    M_matrix /= np.median(M_matrix)
+    M_matrix /= np.max(M_matrix)
+#     M_matrix /= np.median(M_matrix)
     return torch.tensor(M_matrix, dtype=torch.double)
 
 
@@ -55,13 +55,14 @@ def calculate_M_matrix(m):
 #     return torch.softmax(under_exp_vector, dim=0)
 
 
-# def calculate_x_old(lamb, n, M_matrix_over_gamma, ones):
+# def calculate_x(lamb, n, M_matrix_over_gamma, ones):
 #     A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
 #     return torch.softmax(A.view(-1), dim=0)
 
 
-def calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones):
-    log_X = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
+#TODO: check
+def calculate_x(lamb, n, M_matrix_over_gamma, ones):
+    log_X = -M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])
     max_log_X = log_X.max()
     log_X_stable = log_X - max_log_X
     X_stable = torch.exp(log_X_stable)
@@ -73,7 +74,7 @@ def phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, X_stable_sum=None, max_
     if optimizer is not None:
         optimizer.zero_grad()
     if X_stable_sum is None or max_log_X is None:
-        A = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
+        A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
         s = torch.logsumexp(A.view(-1), dim=0)
     else:
         s = torch.log(X_stable_sum) + max_log_X
@@ -134,11 +135,11 @@ def calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device='cpu'):
     if p_order == 3:
 #         return s.max() ** 2 * 15 / gamma ** 3
 #         return s.max() ** 2 * 15
-        return s ** 4 * 15 / gamma ** 3
+        return gamma * s ** 4 * 15
     elif p_order == 1:
 #         return s.max() / gamma
 #         return s.max()
-        return s ** 2 / gamma
+        return gamma * s ** 2
     else:
         raise NotImplementedError(f'Lipschitz constant calculation for p={p_order} is not implemented!')
 
@@ -179,6 +180,8 @@ def optimize(
             if i == 0:
                 init_cr_1 = cr_1
                 init_cr_2 = cr_2
+                init_phi = phi_value.item()
+                init_f = f_value.item()
             clear_output(wait=True)
             time_whole = int(time.time() - start_time)
             time_h = time_whole // 3600
@@ -188,6 +191,8 @@ def optimize(
                 f'Step #{i}',
                 f'cr_1: {init_cr_1} -> {cr_1}',
                 f'cr_2: {init_cr_2} -> {cr_2}',
+                f'phi: {init_phi} -> {phi_value.item()}',
+                f'f: {init_f} -> {f_value.item()}',
                 f'time={time_h}h, {time_m}m, {time_s}s'
             ]))
             fig, ax = plt.subplots(1, 2, figsize=(20, 8))
@@ -273,7 +278,7 @@ def run_experiment(
             M_p=M_p,
             p_order=torch.tensor(3, device=device),
             eps=0.01,
-            calculate_primal_var=lambda lamb: calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones)
+            calculate_primal_var=lambda lamb: calculate_x(lamb, n, M_matrix_over_gamma, ones)
         )
     else:
         lamb = optimizer.param_groups[0]['params'][0]
@@ -299,18 +304,18 @@ if __name__ == '__main__':
     n = 784
     device = 'cpu'
 
-    # A_A_T_path = 'A_A_T.pkl'
-    # if not os.path.exists(A_A_T_path):
-    #     A_matrix = calculate_A_matrix(n).to(device)
-    #     A_A_T = A_matrix @ A_matrix.T
-    #     torch.save(A_A_T, A_A_T_path)
-    # else:
-    #     A_A_T = torch.load(A_A_T_path)
+    A_A_T_path = 'A_A_T.pkl'
+    if not os.path.exists(A_A_T_path):
+        A_matrix = calculate_A_matrix(n).to(device)
+        A_A_T = A_matrix @ A_matrix.T
+        torch.save(A_A_T, A_A_T_path)
+    else:
+        A_A_T = torch.load(A_A_T_path)
 
     eps = 0.02
     gamma = 0.35
     image_index = 0
 
-    M_p = calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device=device)
+    M_p = calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=A_A_T, device=device)
 
     run_experiment(M_p, gamma, eps, image_index, device=device)
