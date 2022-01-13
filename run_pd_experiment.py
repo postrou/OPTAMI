@@ -7,6 +7,7 @@ from mnist import MNIST
 from tqdm import trange
 import matplotlib.pylab as plt
 from IPython.display import clear_output
+import cv2
 
 from OPTAMI import *
 
@@ -16,8 +17,15 @@ def load_data(path='./data/'):
     return mndata.load_training()
 
 
-def mnist(eps, p, q, images, n):
+def mnist(eps, p, q, images, m):
     p, q = np.float64(images[p]), np.float64(images[q])
+    old_m = int(p.size ** 0.5)
+    if old_m != m:
+        p = cv2.resize(p.reshape(old_m, old_m), (m, m))
+        q = cv2.resize(q.reshape(old_m, old_m), (m, m))
+        p = p.reshape(-1)
+        q = q.reshape(-1)
+    n = m ** 2
     # normalize
     p, q = p / sum(p), q / sum(q)
 
@@ -153,6 +161,8 @@ def optimize(
         max_steps=None,
         fgm_cr_1_list=None,
         fgm_cr_2_list=None,
+        fgm_phi_list=None,
+        fgm_f_list=None,
         device='cpu'
 ):
     i = 0
@@ -162,6 +172,8 @@ def optimize(
 
     cr_1_list = []
     cr_2_list = []
+    phi_list = []
+    f_list = []
     while True:
         optimizer.step(closure)
         torch.cuda.empty_cache()
@@ -170,9 +182,11 @@ def optimize(
             X_hat_matrix_next = optimizer.state['default']['x_hat'][0]
             phi_value = optimizer.state['default']['phi_next'][0]
             f_value = f(X_hat_matrix_next, M_matrix, gamma, device)
+            phi_list.append(phi_value.item())
+            f_list.append(f_value.item())
 
             cr_1 = abs(phi_value + f_value)
-            cr_2 = (M_matrix * (round_function(X_hat_matrix_next) - X_hat_matrix_next)).sum()
+            cr_2 = abs((M_matrix * (round_function(X_hat_matrix_next) - X_hat_matrix_next)).sum())
             cr_1_list.append(cr_1.detach().clone().item())
             cr_2_list.append(cr_2.detach().clone().item())
             # cr_2 = torch.norm(A_matrix @ x_hat - b)
@@ -181,7 +195,9 @@ def optimize(
                 init_cr_2 = cr_2
                 init_phi_value = phi_value.detach()
                 init_f_value = f_value.item()
+
             clear_output(wait=True)
+
             time_whole = int(time.time() - start_time)
             time_h = time_whole // 3600
             time_m = time_whole % 3600 // 60
@@ -194,21 +210,33 @@ def optimize(
                 f'f: {init_f_value} -> {f_value.item()}',
                 f'time={time_h}h, {time_m}m, {time_s}s'
             ]))
-            if fgm_cr_1_list is not None and fgm_cr_2_list is not None:
-                fig, ax = plt.subplots(1, 2, figsize=(20, 8))
-                ax[0].plot(fgm_cr_1_list, label='FGM')
-                ax[0].plot(cr_1_list, label='Tensor Method')
-                ax[0].set_xlabel('iter')
-                ax[0].set_ylabel('Dual gap')
-                ax[0].set_yscale('log')
-                ax[0].legend()
+            if fgm_cr_1_list is not None and fgm_cr_2_list is not None and fgm_phi_list is not None and fgm_f_list is not None:
+                fig, ax = plt.subplots(2, 2, figsize=(20, 16))
+                ax[0, 0].plot(fgm_cr_1_list, label='FGM')
+                ax[0, 0].plot(cr_1_list, label='Tensor Method')
+                ax[0, 0].set_xlabel('iter')
+                ax[0, 0].set_ylabel('Dual gap')
+                ax[0, 0].set_yscale('log')
+                ax[0, 0].legend()
 
-                ax[1].plot(fgm_cr_2_list, label='FGM')
-                ax[1].plot(cr_2_list, label='Tensor Method')
-                ax[1].set_xlabel('iter')
-                ax[1].set_ylabel('Linear constraints')
-                ax[1].set_yscale('log')
-                ax[1].legend()
+                ax[0, 1].plot(fgm_cr_2_list, label='FGM')
+                ax[0, 1].plot(cr_2_list, label='Tensor Method')
+                ax[0, 1].set_xlabel('iter')
+                ax[0, 1].set_ylabel('Linear constraints')
+                ax[0, 1].set_yscale('log')
+                ax[0, 1].legend()
+
+                ax[1, 0].plot(fgm_phi_list, label='FGM')
+                ax[1, 0].plot(phi_list, label='Tensor Method')
+                ax[1, 0].set_xlabel('iter')
+                ax[1, 0].set_ylabel('Dual function value')
+                ax[1, 0].legend()
+
+                ax[1, 1].plot(fgm_f_list, label='FGM')
+                ax[1, 1].plot(f_list, label='Tensor Method')
+                ax[1, 1].set_xlabel('iter')
+                ax[1, 1].set_ylabel('Primal function value')
+                ax[1, 1].legend()
                 plt.show()
 
             # print('\n'.join(
@@ -226,7 +254,7 @@ def optimize(
                     break
 
             i += 1
-    return i, cr_1, cr_2
+    return i, cr_1_list, cr_2_list, phi_list, f_list
 
 
 def run_experiment(
@@ -234,24 +262,29 @@ def run_experiment(
         gamma,
         eps,
         image_index=0,
+        new_m=None,
         optimizer=None,
         max_steps=None,
         fgm_cr_1_list=None,
         fgm_cr_2_list=None,
+        fgm_phi_list=None,
+        fgm_f_list=None,
         device='cpu',
         debug=False
 ):
     images, labels = load_data()
-    n = len(images[0])
-    m = int(np.sqrt(n))
+    if new_m is not None:
+        n = new_m ** 2
+        m = new_m
+    else:
+        n = len(images[0])
+        m = int(np.sqrt(n))
+
     gamma = torch.tensor(gamma, device=device)
 
     M_matrix = calculate_M_matrix(m)
     M_matrix = M_matrix.to(device)
     M_matrix_over_gamma = M_matrix / gamma
-
-    # if A_matrix is None:
-    #     A_matrix = calculate_A_matrix(n).to(device)
 
     # experiments were done for
     p_list = [34860, 31226, 239, 37372, 17390]
@@ -261,10 +294,12 @@ def run_experiment(
     # epslist = 1 / x_array
 
     epsp = eps / 8
-    p, q = mnist(epsp, p_list[image_index], q_list[image_index], images, n)
+
+    p, q = mnist(epsp, p_list[image_index], q_list[image_index], images, m)
     p = torch.tensor(p, device=device, dtype=torch.double)
     q = torch.tensor(q, device=device, dtype=torch.double)
-    p_ref, q_ref = mnist(0, p_list[image_index], q_list[image_index], images, n)
+
+    p_ref, q_ref = mnist(0, p_list[image_index], q_list[image_index], images, m)
     p_ref = torch.tensor(p_ref, device=device, dtype=torch.double)
     q_ref = torch.tensor(q_ref, device=device, dtype=torch.double)
 
@@ -285,7 +320,7 @@ def run_experiment(
         
     closure = lambda: phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=optimizer)
     round_function = lambda X_matrix: B_round(X_matrix, p_ref, q_ref, ones)
-    i, cr_1, cr_2 = optimize(
+    i, cr_1_list, cr_2_list, phi_list, f_list = optimize(
         optimizer,
         closure,
         round_function,
@@ -295,9 +330,11 @@ def run_experiment(
         max_steps,
         fgm_cr_1_list,
         fgm_cr_2_list,
+        fgm_phi_list,
+        fgm_f_list,
         device
     )
-    return optimizer, i, cr_1, cr_2
+    return optimizer, i, cr_1_list, cr_2_list, phi_list, f_list
 
 
 if __name__ == '__main__':
