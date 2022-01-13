@@ -238,7 +238,8 @@ def run_experiment(
         max_steps=None,
         fgm_cr_1_list=None,
         fgm_cr_2_list=None,
-        device='cpu'
+        device='cpu',
+        debug=False
 ):
     images, labels = load_data()
     n = len(images[0])
@@ -276,7 +277,8 @@ def run_experiment(
             M_p=M_p,
             p_order=torch.tensor(3, device=device),
             eps=0.01,
-            calculate_primal_var=lambda lamb: calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones)
+            calculate_primal_var=lambda lamb: calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones),
+            debug=debug
         )
     else:
         lamb = optimizer.param_groups[0]['params'][0]
@@ -302,18 +304,18 @@ if __name__ == '__main__':
     n = 784
     device = 'cpu'
 
-    A_A_T_path = 'A_A_T.pkl'
-    if not os.path.exists(A_A_T_path):
-        A_matrix = calculate_A_matrix(n).to(device)
-        A_A_T = A_matrix @ A_matrix.T
-        torch.save(A_A_T, A_A_T_path)
-    else:
-        A_A_T = torch.load(A_A_T_path)
+    # A_A_T_path = 'A_A_T.pkl'
+    # if not os.path.exists(A_A_T_path):
+    #     A_matrix = calculate_A_matrix(n).to(device)
+    #     A_A_T = A_matrix @ A_matrix.T
+    #     torch.save(A_A_T, A_A_T_path)
+    # else:
+    #     A_A_T = torch.load(A_A_T_path)
 
     eps = 0.02
     gamma = 0.35
     image_index = 0
 
-    M_p = calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=A_A_T, device=device)
+    M_p = calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device=device)
 
-    run_experiment(M_p, gamma, eps, image_index, device=device)
+    run_experiment(M_p, gamma, eps, image_index, max_steps=50, device=device, debug=True)
