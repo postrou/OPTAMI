@@ -19,6 +19,7 @@ class PrimalDualAccelerated(Optimizer):
             tol_subsolve=None,
             subsolver_args=None,
             calculate_primal_var=None,
+            calculate_grad_phi=None,
             debug=False
     ):
         if not M_p >= 0.0:
@@ -55,6 +56,7 @@ class PrimalDualAccelerated(Optimizer):
         self._init_state()
 
         self._calculate_primal_var = calculate_primal_var
+        self._calculate_grad_phi = calculate_grad_phi
 
     def _init_state(self):
         assert len(self.param_groups) == 1
@@ -78,6 +80,8 @@ class PrimalDualAccelerated(Optimizer):
             state['phi_arr'] = [None]
             state['grad_phi_arr'] = [None]
             state['param_arr'] = [None]
+            state['grad_psi_norm'] = None
+            state['other_grad_psi_norm'] = torch.tensor(0)
 
     def step(self, closure=None):
         if closure is None:
@@ -148,7 +152,7 @@ class PrimalDualAccelerated(Optimizer):
         state = self.state['default']
         grad_phi_sum = state['grad_phi_sum']
 
-        v = [torch.empty_like(param) for param in params]
+        v = [torch.zeros_like(param) for param in params]
         if k != 0:
             for i, param in enumerate(params):
                 grad_sum = grad_phi_sum[i]
@@ -163,9 +167,32 @@ class PrimalDualAccelerated(Optimizer):
             phi_arr = state['A_arr']
             grad_phi_arr = state['grad_phi_arr']
             param_arr = state['param_arr']
-            ksi = self._ksi(v_val, A_arr, phi_arr, grad_phi_arr, param_arr, param_group)
-            grad_ksi = torch.autograd.grad(ksi, v_val)[0]
-            assert torch.allclose(grad_ksi, torch.zeros_like(grad_ksi))
+            ksi = self._psi(v_val, A_arr, phi_arr, grad_phi_arr, param_arr, param_group)
+            grad_psi = torch.autograd.grad(ksi, v_val)[0]
+            # # assert torch.allclose(grad_psi, torch.zeros_like(grad_psi), atol=1e-7)
+            state['grad_psi_norm'] = grad_psi.norm()
+
+            if k != 0:
+                C = param_group['C']
+                grad_sum = torch.zeros_like(params[0])
+                for i in range(1, k + 1):
+                    A = A_arr[i]
+                    A_prev = A_arr[i - 1]
+                    lamb = param_arr[i]
+                    grad_phi = self._calculate_grad_phi(lamb)
+                    # assert torch.allclose(grad_phi, grad_phi_arr[i])
+                    grad_sum += (A - A_prev) * grad_phi
+
+                other_fst_factor = -(ttv.factorial(p_order) / C) ** (1 / p_order)
+                other_snd_factor = grad_sum / grad_sum.norm() ** ((p_order - 1) / p_order)
+
+                other_v_val = other_fst_factor * other_snd_factor
+                other_v_val.requires_grad_(True)
+                assert torch.allclose(v_val, other_v_val)
+
+                other_psi = self._psi(other_v_val, A_arr, phi_arr, grad_phi_arr, param_arr, param_group)
+                other_grad_psi = torch.autograd.grad(other_psi, other_v_val)[0]
+                state['other_grad_psi_norm'] = other_grad_psi.norm()
 
         return v
 
@@ -177,18 +204,21 @@ class PrimalDualAccelerated(Optimizer):
     def _calculate_closure_and_its_grad(self, closure, A, A_next, params):
         state = self.state['default']
         outputs = closure()
-        grad_phi_next = torch.autograd.grad(outputs=outputs, inputs=params, retain_graph=False)
         phi_next = outputs.detach().clone()
         if type(outputs) == list:
             state['phi_next'] = phi_next
         else:
             state['phi_next'] = [phi_next]
+
         if self.debug:
             state['phi_arr'].append(phi_next)
 
         # add new gradient to the sum
+        grad_phi_next = torch.autograd.grad(outputs=outputs, inputs=params, retain_graph=False)
+        # grad_phi_next = [self._calculate_grad_phi(params[0])]
         for i, grad in enumerate(grad_phi_next):
             state['grad_phi_sum'][i] += (A_next - A) * grad
+
         if self.debug:
             state['grad_phi_arr'].append(grad_phi_next[0])
 
@@ -205,7 +235,7 @@ class PrimalDualAccelerated(Optimizer):
                     X_hat_matrix_next = (1 - A_over_A_next) * X_matrix + A_over_A_next * X_hat_matrix
                     state['x_hat'][i] = X_hat_matrix_next
 
-    def _ksi(self, lamb, A_arr, phi_arr, grad_phi_arr, param_arr, param_group):
+    def _psi(self, lamb, A_arr, phi_arr, grad_phi_arr, param_arr, param_group):
         assert lamb.requires_grad
         p_order = param_group['p_order']
         C = param_group['C']
