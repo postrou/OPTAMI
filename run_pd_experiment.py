@@ -240,6 +240,7 @@ def optimize(
                     init_other_grad_psi_norm = other_grad_psi_norm
                 print(f'grad_psi_norm: {init_grad_psi_norm} -> {grad_psi_norm}')
                 print(f'other_grad_psi_norm: {init_other_grad_psi_norm} -> {other_grad_psi_norm}')
+
             if fgm_cr_1_list is not None and fgm_cr_2_list is not None and fgm_phi_list is not None and fgm_f_list is not None:
                 fig, ax = plt.subplots(2, 2, figsize=(20, 16))
                 ax[0, 0].plot(fgm_cr_1_list, label='FGM')

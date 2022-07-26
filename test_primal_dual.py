@@ -12,9 +12,8 @@ class PrimalDualAcceleratedTester(PrimalDualAccelerated):
         super().__init__(*args, **kwargs)
         state = self.state['default']
         param_group = self.param_groups[0]
-        params = param_group['params']
 
-        state['A_arr'] = [0.0]
+        state['A_arr'] = [state['A']]
         state['phi_arr'] = [None]
         state['grad_phi_arr'] = [None]
         state['param_arr'] = [None]
@@ -132,21 +131,8 @@ class PrimalDualTestCase(unittest.TestCase):
             optimizer=self.optimizer
         )
 
-    def test_hessian(self):
-        for i in trange(self.n_steps, desc='test_hessian'):
-            self.optimizer.step(self.closure)
-            if self.device != 'cpu':
-                torch.cuda.empty_cache()
-
-            with torch.no_grad():
-                lamb = self.optimizer.param_groups[0]['params'][0]
-                phi_hess = AF.hessian(self.phi_func, lamb)
-                phi_hess_norm = torch.norm(phi_hess, 'fro')
-                self.assertNotAlmostEqual(phi_hess_norm.item(), 0.0, msg='Phi hessian norm equals zero!')
-                self.assertFalse(torch.isnan(phi_hess_norm), msg='Phi hessian norm is nan!')
-
     def test_subproblem(self):
-        for i in trange(self.n_steps, desc='test_subproblem'):
+        for i in trange(1, self.n_steps + 1, desc='test_subproblem'):
             self.optimizer.step(self.closure)
 
             if self.device != 'cpu':
@@ -155,7 +141,6 @@ class PrimalDualTestCase(unittest.TestCase):
             param_group = self.optimizer.param_groups[0]
             params = param_group['params']
             p_order = param_group['p_order']
-            fst_factor = param_group['step_3_fst_factor']
 
             state = self.optimizer.state['default']
             A_arr = state['A_arr']
@@ -169,28 +154,48 @@ class PrimalDualTestCase(unittest.TestCase):
             grad_psi = torch.autograd.grad(psi, v)[0]
             # state['grad_psi_norm'] = grad_psi.norm()
 
-            if i > 0:
-                C = param_group['C']
-                other_grad_sum = torch.zeros_like(params[0])
-                other_grads = torch.zeros(i, len(grad_psi), dtype=torch.double)
-                for j in range(1, i + 1):
-                    A = A_arr[j]
-                    A_prev = A_arr[j - 1]
-                    lamb = param_arr[j]
-                    other_grad_phi = self.optimizer._calculate_grad_phi(lamb)
-                    # assert torch.allclose(grad_phi, grad_phi_arr[j])
-                    other_grads[j - 1] = (A - A_prev) * other_grad_phi
-                    other_grad_sum += (A - A_prev) * other_grad_phi
+            C = param_group['C']
+            other_v_val = torch.zeros_like(v)
+            other_grad_sum = torch.zeros_like(params[0])
+            other_grads = torch.zeros(i, len(grad_psi), dtype=torch.double)
+            for j in range(1, i + 1):
+                A = A_arr[j]
+                A_prev = A_arr[j - 1]
+                lamb = param_arr[j]
+                grad_phi = grad_phi_arr[j]
+                other_grad_phi = self.optimizer._calculate_grad_phi(lamb)
+                self.assertTrue(torch.allclose(grad_phi, other_grad_phi),
+                                f'Autograd gradient and explicit gradient are not equal on step {j}! '
+                                f'Maximal element is {torch.abs(grad_phi - other_grad_phi).argmax()},'
+                                f'{torch.abs(grad_phi - other_grad_phi).max()}')
 
-                self.assertTrue(torch.allclose(other_grad_sum, other_grads.sum(dim=0)), 'Grad sums are not equal!')
-                self.assertTrue(torch.allclose(other_grad_sum, grad_sum), 'Grad sums are not equal!')
+                other_grads[j - 1] = (A - A_prev) * other_grad_phi
+                other_grad_sum += (A - A_prev) * other_grad_phi
+                if j == i - 1:
+                    # since v calculation doesn't include grad_phi_next
+                    other_fst_factor = (ttv.factorial(p_order) / C) ** (1 / p_order)
+                    other_snd_factor = other_grad_sum / (other_grad_sum.norm() ** ((p_order - 1) / p_order))
 
-                other_fst_factor = (ttv.factorial(p_order) / C) ** (1 / p_order)
-                other_snd_factor = other_grad_sum / (other_grad_sum.norm() ** ((p_order - 1) / p_order))
+                    other_v_val = -other_fst_factor * other_snd_factor
+                    other_v_val.requires_grad_(True)
 
-                other_v_val = -other_fst_factor * other_snd_factor
-                other_v_val.requires_grad_(True)
-                assert torch.allclose(v, other_v_val)
+            self.assertTrue(torch.allclose(other_grad_sum, other_grads.sum(dim=0)),
+                            'Stable grad sum and method grad sum are not close!')
+            self.assertTrue(torch.allclose(other_grad_sum, grad_sum), 'Grad sums are not close!')
+            self.assertTrue(torch.allclose(v, other_v_val), f'v values are not close!')
+
+    def test_hessian(self):
+        for _ in trange(self.n_steps, desc='test_hessian'):
+            self.optimizer.step(self.closure)
+            if self.device != 'cpu':
+                torch.cuda.empty_cache()
+
+            with torch.no_grad():
+                lamb = self.optimizer.param_groups[0]['params'][0]
+                phi_hess = AF.hessian(self.phi_func, lamb)
+                phi_hess_norm = torch.norm(phi_hess, 'fro')
+                self.assertNotAlmostEqual(phi_hess_norm.item(), 0.0, msg='Phi hessian norm equals zero!')
+                self.assertFalse(torch.isnan(phi_hess_norm), msg='Phi hessian norm is nan!')
 
 
 if __name__ == '__main__':
