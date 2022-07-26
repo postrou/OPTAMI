@@ -12,11 +12,13 @@ import cv2
 from OPTAMI import *
 
 
+# ok
 def load_data(path='./data/'):
     mndata = MNIST(path)
     return mndata.load_training()
 
 
+# ok
 def mnist(eps, p, q, images, m):
     p, q = np.float64(images[p]), np.float64(images[q])
     old_m = int(p.size ** 0.5)
@@ -29,6 +31,7 @@ def mnist(eps, p, q, images, m):
     # normalize
     p, q = p / sum(p), q / sum(q)
 
+    # why we don't use normal noise, for example?
     p = (1 - eps / 8) * p + eps / (8 * n)
     q = (1 - eps / 8) * q + eps / (8 * n)
 
@@ -44,12 +47,13 @@ def cartesian_product(*arrays):
     return arr.reshape(-1, la)
 
 
+# ok
 def calculate_M_matrix(m):
     M_matrix = np.arange(m)
     M_matrix = cartesian_product(M_matrix, M_matrix)
     M_matrix = cdist(M_matrix, M_matrix)
-    # M_matrix /= np.max(M_matrix)
-    M_matrix /= np.median(M_matrix)
+    M_matrix /= np.max(M_matrix)
+    # M_matrix /= np.median(M_matrix)
     return torch.tensor(M_matrix, dtype=torch.double)
 
 
@@ -63,11 +67,12 @@ def calculate_M_matrix(m):
 #     return torch.softmax(under_exp_vector, dim=0)
 
 
-# def calculate_x(lamb, n, M_matrix_over_gamma, ones):
-#     A = (-M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
-#     return torch.softmax(A.view(-1), dim=0)
+def calculate_x_old(lamb, n, gamma, M_matrix_over_gamma, ones):
+    A = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
+    return torch.softmax(A.view(-1), dim=0)
 
 
+# softmax
 def calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones):
     log_X = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
     max_log_X = log_X.max()
@@ -77,37 +82,61 @@ def calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones):
     return X_stable / X_stable_sum, X_stable_sum, max_log_X
 
 
+# ok
 def phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, X_stable_sum=None, max_log_X=None, optimizer=None):
     if optimizer is not None:
         optimizer.zero_grad()
     if X_stable_sum is None or max_log_X is None:
+        assert lamb.grad is None
+        assert not M_matrix_over_gamma.requires_grad
+        assert not ones.requires_grad
+        assert not p.requires_grad
+        assert not q.requires_grad
+        if torch.is_tensor(gamma):
+            assert not gamma.requires_grad
         A = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
         s = torch.logsumexp(A.view(-1), dim=0)
     else:
         s = torch.log(X_stable_sum) + max_log_X
-    return gamma * (-lamb[:n].dot(p) - lamb[n:].dot(q) + s)
+    return gamma * (s - lamb[:n] @ p - lamb[n:] @ q)
 
 
 # just in case
-def grad_phi(lamb, M_matrix_over_gamma, A_matrix, b, ones):
-    exp_matrix = np.exp(torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]) - M_matrix_over_gamma)
-    exp_matrix_vector = exp_matrix.T.reshape(-1)
+# def grad_phi(lamb, M_matrix_over_gamma, A_matrix, b, ones):
+#     exp_matrix = np.exp(torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]) - M_matrix_over_gamma)
+#     exp_matrix_vector = exp_matrix.T.reshape(-1)
+#
+#     numerator = np.sum(exp_matrix_vector.reshape(-1) * A_matrix, axis=1)
+#     denominator = exp_matrix.sum()
+#     return numerator / denominator - b
 
-    numerator = np.sum(exp_matrix_vector.reshape(-1) * A_matrix, axis=1)
-    denominator = exp_matrix.sum()
-    return numerator / denominator - b
+
+def grad_phi(lamb, gamma, calculate_primal_var, p, q, ones, device='cpu'):
+    X_stable, X_stable_sum, _ = calculate_primal_var(lamb)
+    u_hat_stable, v_hat_stable = X_stable @ ones, X_stable.T @ ones
+
+    grad_phi = gamma * torch.cat((-p + u_hat_stable, -q + v_hat_stable)).to(device)
+    return grad_phi
 
 
+# ok
 def f(x, M_matrix, gamma, device='cpu'):
-    x_copy = x.detach().clone().to(device)
-    x_copy_under_log = x_copy.clone()
-    x_copy_under_log[x_copy == 0.] = 1
+    x = x.detach().clone().to(device)
+    y = x.clone().to(device)
+    y[y == 0.] = 1.
+
+    return (M_matrix * x).sum() + gamma * (x * torch.log(y)).sum()
+
+    # x_copy = x.detach().clone().to(device)
+    # x_copy_under_log = x_copy.clone().reshape(-1)
+    # x_copy_under_log[x_copy.reshape(-1) == 0.] = 1
 
 #     M_matrix_to_vector = M_matrix.view(-1)  # M is symmetric
 #     return (M_matrix_to_vector * x_copy).sum() + gamma * (x_copy * torch.log(x_copy_under_log)).sum()
-    return (M_matrix * x_copy).sum() + gamma * (x_copy * torch.log(x_copy_under_log)).sum()
+#     return (M_matrix * x_copy).sum() + gamma * (x_copy * torch.log(x_copy_under_log)).sum()
 
 
+# ok
 def B_round(x, p_ref, q_ref, ones):
     r = p_ref / (x @ ones)
     r[r > 1] = 1.
@@ -131,22 +160,12 @@ def calculate_A_matrix(n):
     return A
 
 
-def calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device='cpu'):
-#     if A_A_T is None:
-#         A_matrix = calculate_A_matrix(n).to(device)
-#         A_A_T = A_matrix @ A_matrix.T
-#     else:
-#         A_A_T = A_A_T.to(device)
-#     _, s, _ = torch.svd(A_A_T, compute_uv=False)
-    s = 2 ** 0.5
+def calculate_lipschitz_constant(gamma, p_order=3):
+    # s = 2 ** 0.5
     if p_order == 3:
-#         return s.max() ** 2 * 15 / gamma ** 3
-#         return s.max() ** 2 * 15
-        return s ** 4 * 15 / gamma ** 3
+        return 2 * gamma
     elif p_order == 1:
-#         return s.max() / gamma
-#         return s.max()
-        return s ** 2 / gamma
+        return 60 * gamma
     else:
         raise NotImplementedError(f'Lipschitz constant calculation for p={p_order} is not implemented!')
 
@@ -163,7 +182,8 @@ def optimize(
         fgm_cr_2_list=None,
         fgm_phi_list=None,
         fgm_f_list=None,
-        device='cpu'
+        device='cpu',
+        debug=False
 ):
     i = 0
 
@@ -179,8 +199,9 @@ def optimize(
         torch.cuda.empty_cache()
 
         with torch.no_grad():
-            X_hat_matrix_next = optimizer.state['default']['x_hat'][0]
-            phi_value = optimizer.state['default']['phi_next'][0]
+            state = optimizer.state['default']
+            X_hat_matrix_next = state['x_hat'][0]
+            phi_value = state['phi_next'][0]
             f_value = f(X_hat_matrix_next, M_matrix, gamma, device)
             phi_list.append(phi_value.item())
             f_list.append(f_value.item())
@@ -197,6 +218,7 @@ def optimize(
                 init_f_value = f_value.item()
 
             clear_output(wait=True)
+            # os.system('clear')
 
             time_whole = int(time.time() - start_time)
             time_h = time_whole // 3600
@@ -210,6 +232,14 @@ def optimize(
                 f'f: {init_f_value} -> {f_value.item()}',
                 f'time={time_h}h, {time_m}m, {time_s}s'
             ]))
+            if debug:
+                grad_psi_norm = state['grad_psi_norm'].item()
+                other_grad_psi_norm = state['other_grad_psi_norm'].item()
+                if i == 0:
+                    init_grad_psi_norm = grad_psi_norm
+                    init_other_grad_psi_norm = other_grad_psi_norm
+                print(f'grad_psi_norm: {init_grad_psi_norm} -> {grad_psi_norm}')
+                print(f'other_grad_psi_norm: {init_other_grad_psi_norm} -> {other_grad_psi_norm}')
             if fgm_cr_1_list is not None and fgm_cr_2_list is not None and fgm_phi_list is not None and fgm_f_list is not None:
                 fig, ax = plt.subplots(2, 2, figsize=(20, 16))
                 ax[0, 0].plot(fgm_cr_1_list, label='FGM')
@@ -239,13 +269,6 @@ def optimize(
                 ax[1, 1].legend()
                 plt.show()
 
-            # print('\n'.join(
-            #     [
-            #         f'Step #{i}, criterion={criterion}, phi={phi_value}, f={f_value}',
-            #         f'lambda={lamb.detach()}',
-            #         f'x_hat={x_hat.detach()}'
-            #     ]), end='\n\n')
-
             if cr_1 < eps and cr_2 < eps:
                 break
 
@@ -269,8 +292,7 @@ def run_experiment(
         fgm_cr_2_list=None,
         fgm_phi_list=None,
         fgm_f_list=None,
-        device='cpu',
-        debug=False
+        device='cpu'
 ):
     images, labels = load_data()
     if new_m is not None:
@@ -290,10 +312,8 @@ def run_experiment(
     p_list = [34860, 31226, 239, 37372, 17390]
     q_list = [45815, 35817, 43981, 54698, 49947]
 
-    # x_array = np.linspace(1 / 2e-2, 1 / 4e-4, 6)
-    # epslist = 1 / x_array
-
     epsp = eps / 8
+    # epsp = eps
 
     p, q = mnist(epsp, p_list[image_index], q_list[image_index], images, m)
     p = torch.tensor(p, device=device, dtype=torch.double)
@@ -304,16 +324,17 @@ def run_experiment(
     q_ref = torch.tensor(q_ref, device=device, dtype=torch.double)
 
     ones = torch.ones(n, device=device, dtype=torch.double)
-    
+
     if optimizer is None:
         lamb = torch.zeros(n * 2, dtype=torch.double, requires_grad=True, device=device)
+        caclulate_primal_var = lambda lamb: calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones)
         optimizer = PrimalDualAccelerated(
             [lamb],
             M_p=M_p,
             p_order=torch.tensor(3, device=device),
             eps=0.01,
-            calculate_primal_var=lambda lamb: calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones),
-            debug=debug
+            calculate_primal_var=caclulate_primal_var,
+            calculate_grad_phi=lambda lamb: grad_phi(lamb, gamma, caclulate_primal_var, p, q, ones, device)
         )
     else:
         lamb = optimizer.param_groups[0]['params'][0]
@@ -341,18 +362,12 @@ if __name__ == '__main__':
     n = 784
     device = 'cpu'
 
-    # A_A_T_path = 'A_A_T.pkl'
-    # if not os.path.exists(A_A_T_path):
-    #     A_matrix = calculate_A_matrix(n).to(device)
-    #     A_A_T = A_matrix @ A_matrix.T
-    #     torch.save(A_A_T, A_A_T_path)
-    # else:
-    #     A_A_T = torch.load(A_A_T_path)
+    gamma = 1.2
+    eps = 0.001
+    image_index = 2
+    new_m = 10
 
-    eps = 0.02
-    gamma = 0.35
-    image_index = 0
+    M_p = calculate_lipschitz_constant(gamma, p_order=3)
 
-    M_p = calculate_lipschitz_constant(n, gamma, p_order=3, A_A_T=None, device=device)
-
-    run_experiment(M_p, gamma, eps, image_index, max_steps=50, device=device, debug=True)
+    torch.autograd.set_detect_anomaly(True)
+    run_experiment(M_p, gamma, eps, image_index, new_m, max_steps=500, device=device)
