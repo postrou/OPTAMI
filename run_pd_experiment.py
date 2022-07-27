@@ -31,7 +31,7 @@ def mnist(eps, p, q, images, m):
     # normalize
     p, q = p / sum(p), q / sum(q)
 
-    # why we don't use normal noise, for example?
+    # so there won't be any zeros
     p = (1 - eps / 8) * p + eps / (8 * n)
     q = (1 - eps / 8) * q + eps / (8 * n)
 
@@ -57,16 +57,6 @@ def calculate_M_matrix(m):
     return torch.tensor(M_matrix, dtype=torch.double)
 
 
-# def calculate_x(lamb, half_lamb_len, gamma, M_matrix_over_gamma, device='cpu'):
-#     psi = lamb[:half_lamb_len]
-#     eta = lamb[half_lamb_len:]
-#     psi_outer = torch.outer(psi, torch.ones(half_lamb_len, device=device))
-#     eta_outer = torch.outer(torch.ones(half_lamb_len, device=device), eta)
-#     lamb_factor_over_gamma = (psi_outer + eta_outer) / gamma
-#     under_exp_vector = (lamb_factor_over_gamma - M_matrix_over_gamma).T.reshape(-1)
-#     return torch.softmax(under_exp_vector, dim=0)
-
-
 def calculate_x_old(lamb, n, gamma, M_matrix_over_gamma, ones):
     A = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
     return torch.softmax(A.view(-1), dim=0)
@@ -74,7 +64,7 @@ def calculate_x_old(lamb, n, gamma, M_matrix_over_gamma, ones):
 
 # softmax
 def calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones):
-    log_X = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
+    log_X = -M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])
     max_log_X = log_X.max()
     log_X_stable = log_X - max_log_X
     X_stable = torch.exp(log_X_stable)
@@ -94,21 +84,11 @@ def phi(lamb, n, gamma, M_matrix_over_gamma, ones, p, q, X_stable_sum=None, max_
         assert not q.requires_grad
         if torch.is_tensor(gamma):
             assert not gamma.requires_grad
-        A = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])) / gamma
+        A = -M_matrix_over_gamma + (torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]))
         s = torch.logsumexp(A.view(-1), dim=0)
     else:
         s = torch.log(X_stable_sum) + max_log_X
     return gamma * (s - lamb[:n] @ p - lamb[n:] @ q)
-
-
-# just in case
-# def grad_phi(lamb, M_matrix_over_gamma, A_matrix, b, ones):
-#     exp_matrix = np.exp(torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:]) - M_matrix_over_gamma)
-#     exp_matrix_vector = exp_matrix.T.reshape(-1)
-#
-#     numerator = np.sum(exp_matrix_vector.reshape(-1) * A_matrix, axis=1)
-#     denominator = exp_matrix.sum()
-#     return numerator / denominator - b
 
 
 def grad_phi(lamb, gamma, calculate_primal_var, p, q, ones, device='cpu'):
@@ -127,14 +107,6 @@ def f(x, M_matrix, gamma, device='cpu'):
 
     return (M_matrix * x).sum() + gamma * (x * torch.log(y)).sum()
 
-    # x_copy = x.detach().clone().to(device)
-    # x_copy_under_log = x_copy.clone().reshape(-1)
-    # x_copy_under_log[x_copy.reshape(-1) == 0.] = 1
-
-#     M_matrix_to_vector = M_matrix.view(-1)  # M is symmetric
-#     return (M_matrix_to_vector * x_copy).sum() + gamma * (x_copy * torch.log(x_copy_under_log)).sum()
-#     return (M_matrix * x_copy).sum() + gamma * (x_copy * torch.log(x_copy_under_log)).sum()
-
 
 # ok
 def B_round(x, p_ref, q_ref, ones):
@@ -149,22 +121,11 @@ def B_round(x, p_ref, q_ref, ones):
     return F + torch.outer(err_r, err_c) / torch.abs(err_r).sum()
 
 
-def calculate_A_matrix(n):
-    A = torch.hstack([torch.eye(n)] * n)
-    vectors = torch.vstack(
-        [torch.hstack([
-            torch.zeros(1, n) if j != i else torch.ones(1, n) for j in range(n)
-        ]) for i in trange(n, desc='Building matrix A')]
-    )
-    A = torch.vstack((A, vectors))
-    return A
-
-
 def calculate_lipschitz_constant(gamma, p_order=3):
     # s = 2 ** 0.5
-    if p_order == 3:
+    if p_order == 1:
         return 2 * gamma
-    elif p_order == 1:
+    elif p_order == 3:
         return 60 * gamma
     else:
         raise NotImplementedError(f'Lipschitz constant calculation for p={p_order} is not implemented!')
@@ -327,7 +288,9 @@ def run_experiment(
     ones = torch.ones(n, device=device, dtype=torch.double)
 
     if optimizer is None:
-        lamb = torch.zeros(n * 2, dtype=torch.double, requires_grad=True, device=device)
+        lamb = torch.zeros(n * 2, dtype=torch.double, requires_grad=False, device=device)
+        lamb.mul_(-1 / gamma).requires_grad_(True)
+
         caclulate_primal_var = lambda lamb: calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones)
         optimizer = PrimalDualAccelerated(
             [lamb],
