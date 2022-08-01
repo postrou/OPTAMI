@@ -17,8 +17,7 @@ class PrimalDualAccelerated(Optimizer):
             subsolver_bdgm=None,
             tol_subsolve=None,
             subsolver_args=None,
-            calculate_primal_var=None,
-            calculate_grad_phi=None
+            calculate_primal_var=None
     ):
         if not M_p >= 0.0:
             raise ValueError("Invalid L: {}".format(M_p))
@@ -53,7 +52,6 @@ class PrimalDualAccelerated(Optimizer):
         self._init_state()
 
         self._calculate_primal_var = calculate_primal_var
-        self._calculate_grad_phi = calculate_grad_phi   # for debug purposes only
 
     def _init_state(self):
         assert len(self.param_groups) == 1
