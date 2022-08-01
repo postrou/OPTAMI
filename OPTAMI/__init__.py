@@ -8,6 +8,7 @@ from .superfast import Superfast
 from .hyperfast import Hyperfast
 from .tfgm import TFGM
 from .primal_dual import PrimalDualAccelerated
+from .fgm import fast_gradient_method
 #
 # del cubic_newton
 # del bdgm
