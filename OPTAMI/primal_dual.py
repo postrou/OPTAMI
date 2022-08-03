@@ -63,16 +63,23 @@ class PrimalDualAccelerated(Optimizer):
         for param in params:
             param_copy = param.clone().detach()
             assert len(param_copy.shape) <= 2, "May be some troubles with tensor of higher order"
+
         state['x_hat'] = []
         state['grad_phi_sum'] = [torch.zeros_like(param) for param in params]
         state['phi_next'] = None
         state['psi'] = None
         state['A'] = 0.0
         state['k'] = 0
+        state['v'] = [torch.zeros_like(param) for param in params]
+        state['A_arr'] = [state['A']]
+        state['phi_arr'] = [None]
+        state['grad_phi_arr'] = [None]
+        state['param_arr'] = [params[0]]
+        state['psi_value'] = None
 
     def step(self, closure=None):
         if closure is None:
-            raise ValueError("Closure is None. Closure is necessary for this method. ")
+            raise ValueError("Closure is None. Closure is necessary for this method.")
         assert len(self.param_groups) == 1
 
         # initialisation
@@ -84,18 +91,16 @@ class PrimalDualAccelerated(Optimizer):
         k = state['k']
 
         # step 3
-        #   (checked)
-        v = self._estim_seq_subproblem(k, group)
+        self._estim_seq_subproblem(k, group)
 
-        # step 4 (we won't need a)
-        #   (checked)
+        # step 4 (we won't need a_i)
         A_next = self._calculate_A(k + 1, group)
         state['A'] = A_next
+        state['A_arr'].append(A_next)
 
         # step 5
-        #   (checked)
         A_over_A_next = A / A_next
-        self._update_param_point(v, A_over_A_next, params)
+        self._update_param_point(state['v'], A_over_A_next, params)
 
         # step 6
         subsolver = group['subsolver']
@@ -110,16 +115,18 @@ class PrimalDualAccelerated(Optimizer):
             subsolver_args=subsolver_args
         )
         optimizer.step(closure)
+        state['param_arr'].append(params[0].detach().clone())
 
         # step 7 (since we'll need this function only on step 3 on next k,
         #   here we only calculate \phi(\lambda_{k + 1}) and \nabla \phi(\lambda_{k + 1})
-        #   (checked)
-        _, _ = self._calculate_closure_and_its_grad(closure, A, A_next, params)
+        phi_next, grad_phi_next = self._calculate_closure_and_its_grad(closure, A, A_next, params)
+        state['phi_arr'].append(phi_next)
+        state['grad_phi_arr'].append(grad_phi_next[0])
 
         # step 8
-        #   (checked)
         self._calculate_x_hat_next(k, A_over_A_next, params)
 
+        self._fill_psi_information()
         state['k'] += 1
 
     def _calculate_A(self, k, param_group):
@@ -135,7 +142,7 @@ class PrimalDualAccelerated(Optimizer):
         state = self.state['default']
         grad_phi_sum = state['grad_phi_sum']
 
-        v = [torch.zeros_like(param) for param in params]
+        v = state['v']
         if k != 0:
             for i, param in enumerate(params):
                 grad_sum = grad_phi_sum[i]
@@ -178,3 +185,48 @@ class PrimalDualAccelerated(Optimizer):
                     X_hat_matrix = state['x_hat'][i]
                     X_hat_matrix_next = (1 - A_over_A_next) * X_matrix + A_over_A_next * X_hat_matrix
                     state['x_hat'][i] = X_hat_matrix_next
+
+    def _fill_psi_information(self):
+        group = self.param_groups[0]
+        params = group['params']
+        state = self.state['default']
+
+        assert torch.equal(params[0], group['params'][0])
+        psi_value = self.psi(
+            params[0],
+            state['A_arr'],
+            state['phi_arr'],
+            state['grad_phi_arr'],
+            state['param_arr'],
+            group
+        )
+        grad_psi = torch.autograd.grad(psi_value, params)[0]
+        state['psi_value'] = psi_value
+        state['grad_psi_norm'] = grad_psi.norm()
+
+    def psi(self, lamb, A_arr, phi_arr, grad_phi_arr, param_arr, param_group):
+        assert lamb.requires_grad
+        assert lamb.norm().requires_grad, 'There is torch.no_grad() somewhere!'
+        p_order = param_group['p_order']
+        C = param_group['C']
+
+        state = self.state['default']
+        k = state['k'] - 1  # since we will use _psi after first step
+
+        fact = 1
+        for i in range(2, p_order + 2):
+            fact *= i
+
+        psi_0 = C / fact * lamb.norm() ** (p_order + 1)
+        result = psi_0
+
+        if k != 0:
+            for i in range(1, k + 1):
+                A = A_arr[i]
+                A_prev = A_arr[i - 1]
+                phi = phi_arr[i].detach().clone()
+                grad_phi = grad_phi_arr[i].detach().clone()
+                param = param_arr[i].detach().clone()
+                result += (A - A_prev) * (phi + grad_phi @ (lamb - param))
+
+        return result
