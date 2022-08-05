@@ -1,6 +1,7 @@
 import os
 import time
 
+from tqdm.auto import tqdm
 import torch
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
@@ -79,6 +80,9 @@ def run_experiment(
         lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=optimizer
     )
     round_function = lambda X_matrix: B_round(X_matrix, p_ref, q_ref, ones)
+
+    writer = SummaryWriter(f'tensorboard/TM_gamma_{gamma}_M_p_{M_p}')
+
     i, cr_1_list, cr_2_list, phi_list, f_list = optimize(
         optimizer,
         closure,
@@ -88,6 +92,7 @@ def run_experiment(
         gamma,
         max_steps,
         device,
+        writer
     )
     return optimizer, i, cr_1_list, cr_2_list, phi_list, f_list
 
@@ -101,6 +106,7 @@ def optimize(
     gamma,
     max_steps=None,
     device="cpu",
+    writer=None
 ):
     i = 0
 
@@ -110,7 +116,11 @@ def optimize(
     cr_2_arr = []
     f_arr = []
 
-    writer = SummaryWriter(comment=f'M_p_{optimizer.param_groups[0]["M_p"]}')
+    M_p = optimizer.param_groups[0]['M_p']
+    if max_steps is not None:
+        t = tqdm(desc=f'M_p = {M_p}', total=max_steps, leave=True)
+    else:
+        t = tqdm(desc=f'M_p = {M_p}', leave=True)
 
     while True:
         optimizer.step(closure)
@@ -135,29 +145,39 @@ def optimize(
             cr_2_arr.append(cr_2.detach().clone().item())
             # cr_2 = torch.norm(A_matrix @ x_hat - b)
             if i == 0:
-                init_cr_1 = cr_1
-                init_cr_2 = cr_2
-                init_phi_value = phi_value.detach()
+                init_cr_1 = cr_1.item()
+                init_cr_2 = cr_2.item()
+                init_phi_value = phi_value.item()
                 init_f_value = f_value.item()
 
-            dump_tensorboard_info(i, f_value, cr_1, cr_2, state, writer)
+            if writer is not None:
+                dump_tensorboard_info(i, f_value, cr_1, cr_2, state, writer)
 
-            clear_output(wait=True)
+            # clear_output(wait=True)
             # os.system('clear')
 
             time_h, time_m, time_s = get_time(start_time)
-            print(
-                "\n".join(
-                    [
-                        f"Step #{i}",
-                        f"cr_1: {init_cr_1} -> {cr_1}",
-                        f"cr_2: {init_cr_2} -> {cr_2}",
-                        f"phi: {init_phi_value} -> {phi_value.item()}",
-                        f"f: {init_f_value} -> {f_value.item()}",
-                        f"time={time_h}h, {time_m}m, {time_s}s",
-                    ]
-                )
-            )
+            # print(
+            #     "\n".join(
+            #         [
+            #             f"Step #{i}",
+            #             f"cr_1: {init_cr_1} -> {cr_1}",
+            #             f"cr_2: {init_cr_2} -> {cr_2}",
+            #             f"phi: {init_phi_value} -> {phi_value.item()}",
+            #             f"f: {init_f_value} -> {f_value.item()}",
+            #             f"time={time_h}h, {time_m}m, {time_s}s",
+            #         ]
+            #     )
+            # )
+
+            tqdm_postfix_dict = {
+                'dual gap': f'{init_cr_1:.3f}->{cr_1.item():.3f}',
+                'eq': f'{init_cr_2:.3f}->{cr_2.item():.3f}',
+                'phi': f'{init_phi_value:.3f}->{phi_value.item():.3f}',
+                'f': f'{init_f_value:.3f}->{f_value.item():.3f}',
+            }
+            t.update()
+            t.set_postfix(tqdm_postfix_dict)
 
             if cr_1 < eps and cr_2 < eps:
                 break
@@ -307,18 +327,16 @@ def calculate_lipschitz_constant(gamma, p_order=3):
 def dump_tensorboard_info(i, f_value, cr_1, cr_2, state, writer):
     psi_value = state["psi_value"]
     phi_value = state["phi_arr"][-1]
-    grad_phi = state["grad_phi_arr"][-1]
     grad_psi_norm = state["grad_psi_norm"]
     v = state["v"][0]
 
     writer.add_scalar(tag="phi_value", scalar_value=phi_value.item(), global_step=i)
-    writer.add_scalar("grad_phi.norm()", grad_phi.norm(), i)
     writer.add_scalar("f_value", f_value, i)
     writer.add_scalar("|f_value + phi_value|", cr_1, i)
     writer.add_scalar("||Ax - b||", cr_2, i)
-    writer.add_scalar("v.norm()", v[0].norm(), i)
-    writer.add_scalar("psi_value", psi_value, i)
-    writer.add_scalar("grad_phi.norm()", grad_psi_norm, i)
+#     writer.add_scalar("v.norm()", v[0].norm(), i)
+#     writer.add_scalar("psi_value", psi_value, i)
+#     writer.add_scalar("grad_psi.norm()", grad_psi_norm, i)
     writer.flush()
 
 
