@@ -1,8 +1,7 @@
 import torch
 from torch.optim.optimizer import Optimizer
 
-import OPTAMI as opt
-from OPTAMI.sup import tuple_to_vec as ttv
+import OPTAMI
 
 
 class PrimalDualAccelerated(Optimizer):
@@ -10,15 +9,27 @@ class PrimalDualAccelerated(Optimizer):
     def __init__(
             self,
             params,
-            M_p=1e+3,
-            eps=1e-1,
-            p_order=3,
-            subsolver=opt.BDGM,
-            subsolver_bdgm=None,
-            tol_subsolve=None,
-            subsolver_args=None,
-            calculate_primal_var=None
+            M_p: float,
+            p_order: int = 3,
+            tensor_step_method: Optimizer = None,
+            tensor_step_kwargs: dict = None,
+            subsolver: Optimizer = None,
+            subsolver_args: dict = None,
+            max_iters: int = None,
+            verbose: bool = None,
+            calculate_primal_var=None,
+            keep_psi_data=False
     ):
+        self.p_order = p_order
+        self.tensor_step_method = tensor_step_method
+        self.subsolver = subsolver
+        self.subsolver_args = subsolver_args
+        self.max_iters = max_iters
+        self.tensor_step_kwargs = tensor_step_kwargs
+        self.verbose = verbose
+        self.keep_psi_data = keep_psi_data
+        self._calculate_primal_var = calculate_primal_var
+
         if not M_p >= 0.0:
             raise ValueError("Invalid L: {}".format(M_p))
         if calculate_primal_var is None:
@@ -31,7 +42,9 @@ class PrimalDualAccelerated(Optimizer):
         A_factor = ((p_order - 1) * (M_squared - M_p_squared) /
                     (4 * (p_order + 1) * p_order ** 2 * M_squared)) ** (p_order / 2)
 
-        p_fact = ttv.factorial(p_order)
+        p_fact = 1
+        for i in range(2, p_order + 1):
+            p_fact *= i
         step_3_fst_factor = (p_fact / C) ** (1 / p_order)
 
         defaults = dict(
@@ -40,18 +53,10 @@ class PrimalDualAccelerated(Optimizer):
             C=C,
             A_factor=A_factor,
             step_3_fst_factor=step_3_fst_factor,
-            eps=eps,
-            p_order=p_order,
-            subsolver=subsolver,
-            subsolver_bdgm=subsolver_bdgm,
-            tol_subsolve=tol_subsolve,
-            subsolver_args=subsolver_args
         )
         super().__init__(params, defaults)
 
         self._init_state()
-
-        self._calculate_primal_var = calculate_primal_var
 
     def _init_state(self):
         assert len(self.param_groups) == 1
@@ -71,11 +76,12 @@ class PrimalDualAccelerated(Optimizer):
         state['A'] = 0.0
         state['k'] = 0
         state['v'] = [torch.zeros_like(param) for param in params]
-        state['A_arr'] = [state['A']]
-        state['phi_arr'] = [None]
-        state['grad_phi_arr'] = [None]
-        state['param_arr'] = [params[0]]
-        state['psi_value'] = None
+        if self.keep_psi_data:
+            state['A_arr'] = [state['A']]
+            state['phi_arr'] = [None]
+            state['grad_phi_arr'] = [None]
+            state['param_arr'] = [params[0]]
+            state['psi_value'] = None
 
     def step(self, closure=None):
         if closure is None:
@@ -96,47 +102,36 @@ class PrimalDualAccelerated(Optimizer):
         # step 4 (we won't need a_i)
         A_next = self._calculate_A(k + 1, group)
         state['A'] = A_next
-        state['A_arr'].append(A_next)
 
         # step 5
         A_over_A_next = A / A_next
         self._update_param_point(state['v'], A_over_A_next, params)
 
         # step 6
-        subsolver = group['subsolver']
-        subsolver_bdgm = group['subsolver_bdgm']
-        tol_subsolve = group['tol_subsolve']
-        subsolver_args = group['subsolver_args']
-        optimizer = subsolver(
-            params,
-            L=M,
-            subsolver_bdgm=subsolver_bdgm,
-            tol_subsolve=tol_subsolve,
-            subsolver_args=subsolver_args
-        )
-        optimizer.step(closure)
-        state['param_arr'].append(params[0].detach().clone())
+        self._perform_tensor_step(closure)
 
         # step 7 (since we'll need this function only on step 3 on next k,
         #   here we only calculate \phi(\lambda_{k + 1}) and \nabla \phi(\lambda_{k + 1})
         phi_next, grad_phi_next = self._calculate_closure_and_its_grad(closure, A, A_next, params)
-        state['phi_arr'].append(phi_next)
-        state['grad_phi_arr'].append(grad_phi_next[0])
 
         # step 8
         self._calculate_x_hat_next(k, A_over_A_next, params)
 
-        self._fill_psi_information()
+        if self.keep_psi_data:
+            state['phi_arr'].append(phi_next)
+            state['grad_phi_arr'].append(grad_phi_next[0])
+            state['A_arr'].append(A_next)
+            state['param_arr'].append(params[0].detach().clone())
+            self._fill_psi_information()
+            
         state['k'] += 1
 
     def _calculate_A(self, k, param_group):
         A_factor = param_group['A_factor']
-        p_order = param_group['p_order']
-        return A_factor * (k / (p_order + 1)) ** (p_order + 1)
+        return A_factor * (k / (self.p_order + 1)) ** (self.p_order + 1)
 
     def _estim_seq_subproblem(self, k, param_group):
         params = param_group['params']
-        p_order = param_group['p_order']
         fst_factor = param_group['step_3_fst_factor']
 
         state = self.state['default']
@@ -147,7 +142,7 @@ class PrimalDualAccelerated(Optimizer):
             for i, param in enumerate(params):
                 grad_sum = grad_phi_sum[i]
                 grad_sum_norm = grad_sum.norm()
-                snd_factor = grad_sum / grad_sum_norm ** (1 - 1 / p_order)
+                snd_factor = grad_sum / (grad_sum_norm ** (1 - 1 / self.p_order))
                 v[i] = -fst_factor * snd_factor
 
         return v
@@ -156,6 +151,34 @@ class PrimalDualAccelerated(Optimizer):
         with torch.no_grad():
             for i, param in enumerate(params):
                 param.mul_(A_over_A_next).add_(v[i], alpha=1 - A_over_A_next)
+
+    def _perform_tensor_step(self, closure):
+        group = self.param_groups[0]
+        params = group['params']
+        M = group['M']
+        if self.tensor_step_method is None:
+            if self.p_order == 3:
+                self.tensor_step_method = OPTAMI.BasicTensorMethod(
+                    params=params,
+                    L=M,
+                    subsolver=self.subsolver,
+                    subsolver_args=self.subsolver_args,
+                    max_iters=self.max_iters,
+                    verbose=self.verbose
+                )
+            elif self.p_order == 2:
+                self.tensor_step_method = OPTAMI.CubicReguralizedNewton(
+                    params=params,
+                    L=M,
+                    subsolver=self.subsolver,
+                    subsolver_args=self.subsolver_args,
+                    max_iters=self.max_iters,
+                    verbose=self.verbose
+                )
+            else:
+                raise NotImplementedError(f'Method for p = {self.p_order} \
+                                          is not implemented!')
+        self.tensor_step_method.step(closure)
 
     def _calculate_closure_and_its_grad(self, closure, A, A_next, params):
         state = self.state['default']
@@ -207,17 +230,16 @@ class PrimalDualAccelerated(Optimizer):
     def psi(self, lamb, A_arr, phi_arr, grad_phi_arr, param_arr, param_group):
         assert lamb.requires_grad
         assert lamb.norm().requires_grad, 'There is torch.no_grad() somewhere!'
-        p_order = param_group['p_order']
         C = param_group['C']
 
         state = self.state['default']
         k = state['k'] - 1  # since we will use _psi after first step
 
         fact = 1
-        for i in range(2, p_order + 2):
+        for i in range(2, self.p_order + 2):
             fact *= i
 
-        psi_0 = C / fact * lamb.norm() ** (p_order + 1)
+        psi_0 = C / fact * lamb.norm() ** (self.p_order + 1)
         result = psi_0
 
         if k != 0:

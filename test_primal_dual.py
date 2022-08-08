@@ -1,11 +1,10 @@
 import unittest
-from copy import deepcopy
 
 import torch.autograd.functional as AF
+from torch.optim.optimizer import Optimizer
 from tqdm import trange
 
-from OPTAMI.sup import tuple_to_vec as ttv
-from OPTAMI import BDGM
+from OPTAMI.higher_order import PrimalDualAccelerated
 from run_pd_experiment import *
 
 
@@ -13,66 +12,41 @@ class PrimalDualAcceleratedTester(PrimalDualAccelerated):
     def __init__(
         self,
         params,
-        M_p=1e3,
-        eps=1e-1,
-        p_order=3,
-        subsolver=BDGM,
-        subsolver_bdgm=None,
-        tol_subsolve=None,
-        subsolver_args=None,
+        M_p: float,
+        p_order: int = 3,
+        tensor_step_method: Optimizer = None,
+        tensor_step_kwargs: dict = None,
+        subsolver: Optimizer = None,
+        subsolver_args: dict = None,
+        max_iters: int = None,
+        verbose: bool = None,
         calculate_primal_var=None,
         calculate_grad_phi=None,
     ):
         super().__init__(
             params,
             M_p,
-    eps,
             p_order,
+            tensor_step_method,
+            tensor_step_kwargs,
             subsolver,
-            subsolver_bdgm,
-            tol_subsolve,
             subsolver_args,
+            max_iters,
+            verbose,
             calculate_primal_var,
+            keep_psi_data=True
         )
         self._calculate_grad_phi = calculate_grad_phi
 
         state = self.state["default"]
 
-        state["A_arr"] = [state["A"]]
-        state["phi_arr"] = [None]
-        state["grad_phi_arr"] = [None]
-        state["param_arr"] = [None]
         state["grad_psi_norm"] = None
         state["other_grad_psi_norm"] = torch.tensor(0)
-
-    # def step(self, closure=None):
-    #     super().step(closure)
-    #
-    #     params = self.param_groups[0]['params']
-    #     state = self.state['default']
-    #     state['param_arr'].append(params[0].detach().clone())
-    #     state['A_arr'].append(state['A'])
-
-    # def _estim_seq_subproblem(self, k, param_group):
-    #     super()._estim_seq_subproblem(k, param_group)
-    #
-    #
-    #     self.state['default']['v'] = v[0]
-    #     return v
-
-    # def _calculate_closure_and_its_grad(self, closure, A, A_next, params):
-    #     phi_next, grad_phi_next = super()._calculate_closure_and_its_grad(closure, A, A_next, params)
-    #
-    #     state = self.state['default']
-    #     state['grad_phi_arr'].append(grad_phi_next[0])
-    #     state['phi_arr'].append(phi_next)
-    #
-    #     return phi_next, grad_phi_next
 
 
 class PrimalDualTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.n_steps = 500
+        self.n_steps = 100
 
         self.device = "cpu"
         self.gammas = [0.001, 0.5, 1, 1.5]
@@ -139,7 +113,6 @@ class PrimalDualTestCase(unittest.TestCase):
                 [lamb],
                 M_p=M_p,
                 p_order=torch.tensor(3, device=self.device),
-                eps=0.01,
                 calculate_primal_var=self.primal_var_funcs[-1],
                 calculate_grad_phi=self.grad_phi_funcs[-1],
             )
@@ -155,6 +128,10 @@ class PrimalDualTestCase(unittest.TestCase):
         for gamma, optimizer, closure in zip(
             self.gammas, self.optimizers, self.closures
         ):
+            p_fact = 1
+            for i in range(2, optimizer.p_order + 1):
+                p_fact *= i
+
             with trange(1, self.n_steps + 1) as t:
                 for i in t:
                     optimizer.step(closure)
@@ -164,7 +141,6 @@ class PrimalDualTestCase(unittest.TestCase):
 
                     param_group = optimizer.param_groups[0]
                     params = param_group["params"]
-                    p_order = param_group["p_order"]
                     C = param_group["C"]
 
                     state = optimizer.state["default"]
@@ -187,6 +163,7 @@ class PrimalDualTestCase(unittest.TestCase):
                     grad_sum_test = torch.zeros_like(params[0])
                     grads_test = torch.zeros(i, len(grad_psi), dtype=torch.double)
                     for j in range(1, i + 1):
+                        # test grads
                         A = A_arr[j]
                         A_prev = A_arr[j - 1]
                         self.assertGreater(A, A_prev)
@@ -205,10 +182,19 @@ class PrimalDualTestCase(unittest.TestCase):
                         grad_sum_test += (A - A_prev) * explicit_grad_phi
                         if j == i - 1:
                             # since v calculation doesn't include grad_phi_next
-                            other_fst_factor = (ttv.factorial(p_order) / C) ** (1 / p_order)
-                            other_snd_factor = grad_sum_test / (grad_sum_test.norm() ** (1 - 1 / p_order))
+                            test_fst_factor = (p_fact / C) ** (1 / optimizer.p_order)
+                            self.assertEqual(
+                                test_fst_factor, 
+                                param_group['step_3_fst_factor'],
+                                '\n'.join([
+                                    f'Step 3 first factors are not equal!',
+                                    f'original = {param_group["step_3_fst_factor"]}',
+                                    f'test = {test_fst_factor}'
+                                ])
+                            )
+                            other_snd_factor = grad_sum_test / (grad_sum_test.norm() ** (1 - 1 / optimizer.p_order))
 
-                            v_test = -other_fst_factor * other_snd_factor
+                            v_test = -test_fst_factor * other_snd_factor
                             v_test.requires_grad_(True)
 
                     psi_test = optimizer.psi(
@@ -222,7 +208,7 @@ class PrimalDualTestCase(unittest.TestCase):
                         "\n".join(
                             [
                                 "Stable grad sum and method grad sum are not close!",
-                                f"other_grad_sum.norm() = {grad_sum_test.norm()}",
+                                f"grad_sum_test.norm() = {grad_sum_test.norm()}",
                                 f"stable_grad_sum.norm() = {stable_grad_sum.norm()}",
                             ]
                         ),
@@ -234,7 +220,7 @@ class PrimalDualTestCase(unittest.TestCase):
                             [
                                 "Grad sums are not close!",
                                 f"grad_sum.norm() = {grad_sum.norm()}",
-                                f"other_grad_sum.norm() = {grad_sum_test.norm()}",
+                                f"grad_sum_test.norm() = {grad_sum_test.norm()}",
                             ]
                         ),
                     )
@@ -245,7 +231,7 @@ class PrimalDualTestCase(unittest.TestCase):
                             [
                                 "v values are not close!",
                                 f"v.norm() = {v.norm()}",
-                                f"other_v.norm() = {v_test.norm()}",
+                                f"v_test.norm() = {v_test.norm()}",
                             ]
                         ),
                     )
@@ -256,11 +242,11 @@ class PrimalDualTestCase(unittest.TestCase):
                             [
                                 f"Grad psi values are not close!",
                                 f"grad_psi.norm() = {grad_psi.norm()}",
-                                f"other_grad_psi.norm() = {grad_psi_test.norm()}",
+                                f"grad_psi_test.norm() = {grad_psi_test.norm()}",
                                 f"v.norm() = {v.norm()}",
-                                f"other_v.norm() = {v_test.norm()}",
+                                f"v_test.norm() = {v_test.norm()}",
                                 f"grad_sum.norm() = {grad_sum.norm()}",
-                                f"other_grad_sum.norm() = {grad_sum_test.norm()}",
+                                f"grad_sum_test.norm() = {grad_sum_test.norm()}",
                                 f"stable_grad_sum.norm() = {stable_grad_sum.norm()}",
                             ]
                         ),

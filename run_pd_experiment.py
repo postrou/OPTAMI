@@ -22,6 +22,7 @@ def run_experiment(
     optimizer=None,
     max_steps=None,
     device="cpu",
+    tensorboard=False
 ):
     images, labels = load_data()
     if new_m is not None:
@@ -67,11 +68,7 @@ def run_experiment(
             [lamb],
             M_p=M_p,
             p_order=torch.tensor(3, device=device),
-            eps=0.01,
-            calculate_primal_var=caclulate_primal_var,
-            calculate_grad_phi=lambda lamb: grad_phi(
-                lamb, gamma, caclulate_primal_var, p, q, ones, device
-            ),
+            calculate_primal_var=caclulate_primal_var
         )
     else:
         lamb = optimizer.param_groups[0]["params"][0]
@@ -81,7 +78,10 @@ def run_experiment(
     )
     round_function = lambda X_matrix: B_round(X_matrix, p_ref, q_ref, ones)
 
-    writer = SummaryWriter(f'tensorboard/TM_gamma_{gamma}_M_p_{M_p}')
+    if tensorboard:
+        writer = SummaryWriter(f'tensorboard/TM_gamma_{gamma}_M_p_{M_p}')
+    else:
+        writer = None
 
     i, cr_1_list, cr_2_list, phi_list, f_list = optimize(
         optimizer,
