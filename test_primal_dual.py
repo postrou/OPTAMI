@@ -4,7 +4,7 @@ import torch.autograd.functional as AF
 from torch.optim.optimizer import Optimizer
 from tqdm import trange
 
-from OPTAMI.higher_order import PrimalDualAccelerated
+from OPTAMI import PrimalDualAccelerated
 from run_pd_experiment import *
 
 
@@ -157,7 +157,8 @@ class PrimalDualTestCase(unittest.TestCase):
                     psi = optimizer.psi(
                         v, A_arr, phi_arr, grad_phi_arr, param_arr, param_group
                     )
-                    grad_psi = torch.autograd.grad(psi, v)[0]
+                    psi.backward()
+                    grad_psi = v.grad
 
                     v_test = torch.zeros_like(v).requires_grad_(True)
                     grad_sum_test = torch.zeros_like(params[0])
