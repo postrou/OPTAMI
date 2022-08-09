@@ -10,7 +10,7 @@ from mnist import MNIST
 from IPython.display import clear_output
 import cv2
 
-from OPTAMI import *
+from OPTAMI.higher_order import PrimalDualAccelerated
 
 
 def run_experiment(
@@ -268,7 +268,6 @@ def phi(
     if optimizer is not None:
         optimizer.zero_grad()
     if X_stable_sum is None or max_log_X is None:
-        assert lamb.grad is None
         assert not M_matrix_over_gamma.requires_grad
         assert not ones.requires_grad
         assert not p.requires_grad

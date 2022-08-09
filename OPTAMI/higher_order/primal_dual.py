@@ -80,18 +80,16 @@ class PrimalDualAccelerated(Optimizer):
             state['A_arr'] = [state['A']]
             state['phi_arr'] = [None]
             state['grad_phi_arr'] = [None]
-            state['param_arr'] = [params[0]]
+            state['param_arr'] = [params[0].detach().clone()]
             state['psi_value'] = None
 
     def step(self, closure=None):
         if closure is None:
             raise ValueError("Closure is None. Closure is necessary for this method.")
-        assert len(self.param_groups) == 1
 
         # initialisation
         group = self.param_groups[0]
         params = group['params']
-        M = group['M']
         state = self.state['default']
         A = state['A']
         k = state['k']
@@ -119,7 +117,7 @@ class PrimalDualAccelerated(Optimizer):
 
         if self.keep_psi_data:
             state['phi_arr'].append(phi_next)
-            state['grad_phi_arr'].append(grad_phi_next[0])
+            state['grad_phi_arr'].append(grad_phi_next)
             state['A_arr'].append(A_next)
             state['param_arr'].append(params[0].detach().clone())
             self._fill_psi_information()
@@ -190,9 +188,11 @@ class PrimalDualAccelerated(Optimizer):
             state['phi_next'] = [phi_next]
 
         # add new gradient to the sum
-        grad_phi_next = torch.autograd.grad(outputs=outputs, inputs=params, retain_graph=False)
-        for i, grad in enumerate(grad_phi_next):
-            state['grad_phi_sum'][i] += (A_next - A) * grad
+        outputs.backward()
+        for i, param in enumerate(params):
+            grad_phi_next = param.grad.clone()
+            state['grad_phi_sum'][i] += (A_next - A) * grad_phi_next
+        self.zero_grad()
 
         return phi_next, grad_phi_next
 
