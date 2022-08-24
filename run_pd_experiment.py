@@ -24,35 +24,11 @@ def run_experiment(
     device="cpu",
     tensorboard=False
 ):
-    images, labels = load_data()
-    if new_m is not None:
-        n = new_m ** 2
-        m = new_m
-    else:
-        n = len(images[0])
-        m = int(np.sqrt(n))
 
+    n, M_matrix, p, q, p_ref, q_ref = \
+        init_data(image_index, new_m, eps, device)
     gamma = torch.tensor(gamma, device=device)
-
-    M_matrix = calculate_M_matrix(m)
-    M_matrix = M_matrix.to(device)
     M_matrix_over_gamma = M_matrix / gamma
-
-    # experiments were done for
-    p_list = [34860, 31226, 239, 37372, 17390]
-    q_list = [45815, 35817, 43981, 54698, 49947]
-
-    epsp = eps / 8
-    # epsp = eps
-
-    p, q = mnist(epsp, p_list[image_index], q_list[image_index], images, m)
-    p = torch.tensor(p, device=device, dtype=torch.double)
-    q = torch.tensor(q, device=device, dtype=torch.double)
-
-    p_ref, q_ref = mnist(0, p_list[image_index], q_list[image_index], images, m)
-    p_ref = torch.tensor(p_ref, device=device, dtype=torch.double)
-    q_ref = torch.tensor(q_ref, device=device, dtype=torch.double)
-
     ones = torch.ones(n, device=device, dtype=torch.double)
 
     if optimizer is None:
@@ -95,6 +71,36 @@ def run_experiment(
         writer
     )
     return optimizer, i, cr_1_list, cr_2_list, phi_list, f_list
+    
+    
+def init_data(image_index, new_m, eps, device):
+    images, labels = load_data()
+    if new_m is not None:
+        n = new_m ** 2
+        m = new_m
+    else:
+        n = len(images[0])
+        m = int(np.sqrt(n))
+
+    M_matrix = calculate_M_matrix(m)
+    M_matrix = M_matrix.to(device)
+
+    # experiments were done for
+    p_list = [34860, 31226, 239, 37372, 17390]
+    q_list = [45815, 35817, 43981, 54698, 49947]
+
+    epsp = eps / 8
+    # epsp = eps
+
+    p, q = mnist(epsp, p_list[image_index], q_list[image_index], images, m)
+    p = torch.tensor(p, device=device, dtype=torch.double)
+    q = torch.tensor(q, device=device, dtype=torch.double)
+
+    p_ref, q_ref = mnist(0, p_list[image_index], q_list[image_index], images, m)
+    p_ref = torch.tensor(p_ref, device=device, dtype=torch.double)
+    q_ref = torch.tensor(q_ref, device=device, dtype=torch.double)
+ 
+    return n, M_matrix, p, q, p_ref, q_ref
 
 
 def optimize(
@@ -122,6 +128,10 @@ def optimize(
     else:
         t = tqdm(desc=f'M_p = {M_p}', leave=True)
 
+    if optimizer.keep_psi_data:
+        phi_arr = state["phi_arr"]
+    else:
+        phi_arr = []
     while True:
         optimizer.step(closure)
         torch.cuda.empty_cache()
@@ -129,8 +139,9 @@ def optimize(
         with torch.no_grad():
             state = optimizer.state["default"]
             X_hat_matrix_next = state["x_hat"][0]
-            phi_arr = state["phi_arr"]
-            phi_value = phi_arr[-1]
+            phi_value = state['phi_next'][0]
+            if not optimizer.keep_psi_data:
+                phi_arr.append(phi_value)
 
             f_value = f(X_hat_matrix_next, M_matrix, gamma, device)
             f_arr.append(f_value.item())
@@ -152,23 +163,6 @@ def optimize(
 
             if writer is not None:
                 dump_tensorboard_info(i, f_value, cr_1, cr_2, state, writer)
-
-            # clear_output(wait=True)
-            # os.system('clear')
-
-            time_h, time_m, time_s = get_time(start_time)
-            # print(
-            #     "\n".join(
-            #         [
-            #             f"Step #{i}",
-            #             f"cr_1: {init_cr_1} -> {cr_1}",
-            #             f"cr_2: {init_cr_2} -> {cr_2}",
-            #             f"phi: {init_phi_value} -> {phi_value.item()}",
-            #             f"f: {init_f_value} -> {f_value.item()}",
-            #             f"time={time_h}h, {time_m}m, {time_s}s",
-            #         ]
-            #     )
-            # )
 
             tqdm_postfix_dict = {
                 'dual gap': f'{init_cr_1:.3f}->{cr_1.item():.3f}',
@@ -333,9 +327,6 @@ def dump_tensorboard_info(i, f_value, cr_1, cr_2, state, writer):
     writer.add_scalar("f_value", f_value, i)
     writer.add_scalar("|f_value + phi_value|", cr_1, i)
     writer.add_scalar("||Ax - b||", cr_2, i)
-#     writer.add_scalar("v.norm()", v[0].norm(), i)
-#     writer.add_scalar("psi_value", psi_value, i)
-#     writer.add_scalar("grad_psi.norm()", grad_psi_norm, i)
     writer.flush()
 
 
