@@ -8,6 +8,8 @@ import OPTAMI
 
 
 class NearOptimal(Optimizer):
+    MONOTONE = True
+
     def __init__(
         self,
         params,
@@ -187,38 +189,6 @@ class NearOptimal(Optimizer):
         state["dzeta"] = dzeta
 
         return lamb_next
-
-        # # norm_z_theta = ttv.tuple_norm_square(z_theta).pow(p_order - 1).sqrt().item()
-
-        # # linear-search------------
-
-        # inequality = (
-        #     ((1.0 - theta) ** 2 / theta * A) * L_p * norm_z_theta_pow / fac
-        # )  # Hf = L * 3/2
-        # line_search_count += 1
-
-        # if A == 0.0:
-        #     ak = fac / (Hf * norm_z_theta_pow * 2.0)
-        #     A_next = A + ak
-        #     state["theta"] = 1.0
-        #     line_search = False
-        # else:
-        #     # print('ls:', line_search_count)
-        #     # print('theta_up:', theta_up)
-        #     # print('theta:', theta)
-        #     # print('theta_down:', theta_down)
-        #     # print('ineq:', inequality)
-        #     if 0.5 <= inequality <= right_eq:
-        #         state["theta"] = theta
-        #         print("theta after ls", theta)
-        #         line_search = False
-        #     else:
-        #         if inequality < middle_eq:
-        #             theta_up = theta
-        #             theta = (theta + theta_down) / 2.0
-        #         else:
-        #             theta_down = theta
-        #             theta = (theta_up + theta) / 2.0
 
     def _perform_tensor_step(self, closure):
         group = self.param_groups[0]
