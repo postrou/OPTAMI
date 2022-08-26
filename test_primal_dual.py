@@ -4,11 +4,11 @@ import torch.autograd.functional as AF
 from torch.optim.optimizer import Optimizer
 from tqdm import trange
 
-from OPTAMI import PrimalDualAccelerated
+from OPTAMI import PrimalDualTensorMethod
 from run_pd_experiment import *
 
 
-class PrimalDualAcceleratedTester(PrimalDualAccelerated):
+class PrimalDualAcceleratedTester(PrimalDualTensorMethod):
     def __init__(
         self,
         params,
@@ -34,7 +34,7 @@ class PrimalDualAcceleratedTester(PrimalDualAccelerated):
             max_iters,
             verbose,
             calculate_primal_var,
-            keep_psi_data=True
+            keep_psi_data=True,
         )
         self._calculate_grad_phi = calculate_grad_phi
 
@@ -50,10 +50,8 @@ class PrimalDualTestCase(unittest.TestCase):
 
         self.device = "cpu"
         self.gammas = [0.001, 0.5, 1, 1.5]
-        eps = 0.001
         image_index = 2
         new_m = 10
-
         images, labels = load_data()
         if new_m is not None:
             n = new_m**2
@@ -65,8 +63,7 @@ class PrimalDualTestCase(unittest.TestCase):
         p_list = [34860, 31226, 239, 37372, 17390]
         q_list = [45815, 35817, 43981, 54698, 49947]
 
-        # x_array = np.linspace(1 / 2e-2, 1 / 4e-4, 6)
-        # epslist = 1 / x_array
+        eps = 0.001
         epsp = eps / 8
 
         p, q = mnist(epsp, p_list[image_index], q_list[image_index], images, m)
@@ -185,15 +182,19 @@ class PrimalDualTestCase(unittest.TestCase):
                             # since v calculation doesn't include grad_phi_next
                             test_fst_factor = (p_fact / C) ** (1 / optimizer.p_order)
                             self.assertEqual(
-                                test_fst_factor, 
-                                param_group['step_3_fst_factor'],
-                                '\n'.join([
-                                    f'Step 3 first factors are not equal!',
-                                    f'original = {param_group["step_3_fst_factor"]}',
-                                    f'test = {test_fst_factor}'
-                                ])
+                                test_fst_factor,
+                                param_group["step_3_fst_factor"],
+                                "\n".join(
+                                    [
+                                        f"Step 3 first factors are not equal!",
+                                        f'original = {param_group["step_3_fst_factor"]}',
+                                        f"test = {test_fst_factor}",
+                                    ]
+                                ),
                             )
-                            other_snd_factor = grad_sum_test / (grad_sum_test.norm() ** (1 - 1 / optimizer.p_order))
+                            other_snd_factor = grad_sum_test / (
+                                grad_sum_test.norm() ** (1 - 1 / optimizer.p_order)
+                            )
 
                             v_test = -test_fst_factor * other_snd_factor
                             v_test.requires_grad_(True)

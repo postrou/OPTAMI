@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from OPTAMI import NearOptimal
+from OPTAMI import NearOptimalTensorMethod
 from run_pd_experiment import *
 
 
@@ -12,7 +12,7 @@ class NearOptimalTestCase(unittest.TestCase):
         L_p = 1
         p_order = 3
 
-        self.optimizer = NearOptimal([params], L_p, p_order)
+        self.optimizer = NearOptimalTensorMethod([params], L_p, p_order)
         self.closure = lambda: (params + 10).norm()
 
         return super().setUp()
