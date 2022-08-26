@@ -63,7 +63,7 @@ class NearOptimalTensorMethod(Optimizer):
         state["ls_count"] = 0
         state["dzeta"] = 0.0
 
-    def step(self, closure) -> None:
+    def step(self, closure, verbose_ls=False) -> None:
         assert len(self.param_groups) == 1
         assert (
             len(self.param_groups[0]["params"]) == 1
@@ -71,7 +71,7 @@ class NearOptimalTensorMethod(Optimizer):
         state = self.state["default"]
 
         # step 4
-        self._compute_lambda_and_y(closure)
+        self._compute_lambda_and_y(closure, verbose_ls)
 
         # step 5
         self._perform_gradient_step(closure)
@@ -84,10 +84,11 @@ class NearOptimalTensorMethod(Optimizer):
         L_p = group["L_p"]
         state = self.state["default"]
         k = state["k"]
-        if k == 0 and torch.all(param == 0):
+        if k == 0:
+            x_tilde = param.detach().clone()
             self._perform_tensor_step(closure)
             y_next = param.detach().clone()
-            y_next_norm_pow = y_next.norm() ** (self.p_order - 1)
+            y_next_norm_pow = torch.norm(y_next - x_tilde)**(self.p_order - 1)
             state["y"] = y_next
             lamb_next = 7 / 12 * self.fact / (L_p * y_next_norm_pow)
         else:
@@ -156,8 +157,9 @@ class NearOptimalTensorMethod(Optimizer):
                 theta_max = theta
 
             ls_count += 1
-            if ls_count == 1000:
-                raise Exception('Number of lenear search iterations is greater than 1000!')
+            if ls_count == 10000:
+                raise Exception('Number of lenear search iterations is greater \
+                    than 10000!')
 
             if verbose_ls:
                 t.set_description(f"Step #{ls_count}", refresh=False)
