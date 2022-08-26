@@ -4,7 +4,7 @@ from torch.optim.optimizer import Optimizer
 import OPTAMI
 
 
-class PrimalDualAccelerated(Optimizer):
+class PrimalDualTensorMethod(Optimizer):
     def __init__(
         self,
         params,
@@ -93,10 +93,7 @@ class PrimalDualAccelerated(Optimizer):
             state["param_arr"] = [params[0].detach().clone()]
             state["psi_value"] = None
 
-    def step(self, closure=None):
-        if closure is None:
-            raise ValueError("Closure is None. Closure is necessary for this method.")
-
+    def step(self, closure):
         # initialisation
         group = self.param_groups[0]
         params = group["params"]

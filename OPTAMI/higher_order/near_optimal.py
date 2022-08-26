@@ -7,7 +7,7 @@ from tqdm.auto import tqdm
 import OPTAMI
 
 
-class NearOptimal(Optimizer):
+class NearOptimalTensorMethod(Optimizer):
     MONOTONE = True
 
     def __init__(
@@ -63,13 +63,7 @@ class NearOptimal(Optimizer):
         state["ls_count"] = 0
         state["dzeta"] = 0.0
 
-    def step(self, closure=None) -> None:
-        if closure is None:
-            raise ValueError(
-                "Closure is None. \
-                Closure is necessary for this method."
-            )
-
+    def step(self, closure) -> None:
         assert len(self.param_groups) == 1
         assert (
             len(self.param_groups[0]["params"]) == 1
@@ -90,8 +84,7 @@ class NearOptimal(Optimizer):
         L_p = group["L_p"]
         state = self.state["default"]
         k = state["k"]
-        if k == 0:
-            assert torch.all(param == 0)
+        if k == 0 and torch.all(param == 0):
             self._perform_tensor_step(closure)
             y_next = param.detach().clone()
             y_next_norm_pow = y_next.norm() ** (self.p_order - 1)
