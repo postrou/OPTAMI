@@ -10,204 +10,11 @@ from mnist import MNIST
 from IPython.display import clear_output
 import cv2
 
-from OPTAMI.higher_order import PrimalDualAccelerated
+from OPTAMI.higher_order import PrimalDualTensorMethod
+from OPTAMI.higher_order.gradient_norm import GradientNormTensorMethod
 
 
-def run_experiment(
-    M_p,
-    gamma,
-    eps,
-    image_index=0,
-    new_m=None,
-    optimizer=None,
-    max_steps=None,
-    device="cpu",
-    tensorboard=False
-):
-
-    n, M_matrix, p, q, p_ref, q_ref = \
-        init_data(image_index, new_m, eps, device)
-    gamma = torch.tensor(gamma, device=device)
-    M_matrix_over_gamma = M_matrix / gamma
-    ones = torch.ones(n, device=device, dtype=torch.double)
-
-    if optimizer is None:
-        lamb = torch.zeros(
-            n * 2, dtype=torch.double, requires_grad=False, device=device
-        )
-        lamb.mul_(-1 / gamma).requires_grad_(True)
-
-        caclulate_primal_var = lambda lamb: calculate_x(
-            lamb, n, gamma, M_matrix_over_gamma, ones
-        )
-        optimizer = PrimalDualAccelerated(
-            [lamb],
-            M_p=M_p,
-            p_order=torch.tensor(3, device=device),
-            calculate_primal_var=caclulate_primal_var
-        )
-    else:
-        lamb = optimizer.param_groups[0]["params"][0]
-
-    closure = lambda: phi(
-        lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=optimizer
-    )
-    round_function = lambda X_matrix: B_round(X_matrix, p_ref, q_ref, ones)
-
-    if tensorboard:
-        writer = SummaryWriter(f'tensorboard/TM_gamma_{gamma}_M_p_{M_p}')
-    else:
-        writer = None
-
-    i, cr_1_list, cr_2_list, phi_list, f_list = optimize(
-        optimizer,
-        closure,
-        round_function,
-        eps,
-        M_matrix,
-        gamma,
-        max_steps,
-        device,
-        writer
-    )
-    return optimizer, i, cr_1_list, cr_2_list, phi_list, f_list
-    
-    
-def init_data(image_index, new_m, eps, device):
-    images, labels = load_data()
-    if new_m is not None:
-        n = new_m ** 2
-        m = new_m
-    else:
-        n = len(images[0])
-        m = int(np.sqrt(n))
-
-    M_matrix = calculate_M_matrix(m)
-    M_matrix = M_matrix.to(device)
-
-    # experiments were done for
-    p_list = [34860, 31226, 239, 37372, 17390]
-    q_list = [45815, 35817, 43981, 54698, 49947]
-
-    epsp = eps / 8
-    # epsp = eps
-
-    p, q = mnist(epsp, p_list[image_index], q_list[image_index], images, m)
-    p = torch.tensor(p, device=device, dtype=torch.double)
-    q = torch.tensor(q, device=device, dtype=torch.double)
-
-    p_ref, q_ref = mnist(0, p_list[image_index], q_list[image_index], images, m)
-    p_ref = torch.tensor(p_ref, device=device, dtype=torch.double)
-    q_ref = torch.tensor(q_ref, device=device, dtype=torch.double)
- 
-    return n, M_matrix, p, q, p_ref, q_ref
-
-
-def optimize(
-    optimizer,
-    closure,
-    round_function,
-    eps,
-    M_matrix,
-    gamma,
-    max_steps=None,
-    device="cpu",
-    writer=None
-):
-    i = 0
-
-    start_time = time.time()
-
-    cr_1_arr = []
-    cr_2_arr = []
-    f_arr = []
-
-    M_p = optimizer.param_groups[0]['M_p']
-    if max_steps is not None:
-        t = tqdm(desc=f'M_p = {M_p}', total=max_steps, leave=True)
-    else:
-        t = tqdm(desc=f'M_p = {M_p}', leave=True)
-
-    if optimizer.keep_psi_data:
-        phi_arr = state["phi_arr"]
-    else:
-        phi_arr = []
-    while True:
-        optimizer.step(closure)
-        torch.cuda.empty_cache()
-
-        with torch.no_grad():
-            state = optimizer.state["default"]
-            X_hat_matrix_next = state["x_hat"][0]
-            phi_value = state['phi_next'][0]
-            if not optimizer.keep_psi_data:
-                phi_arr.append(phi_value)
-
-            f_value = f(X_hat_matrix_next, M_matrix, gamma, device)
-            f_arr.append(f_value.item())
-
-            cr_1 = abs(phi_value + f_value)
-            cr_2 = abs(
-                (
-                    M_matrix * (round_function(X_hat_matrix_next) - X_hat_matrix_next)
-                ).sum()
-            )
-            cr_1_arr.append(cr_1.detach().clone().item())
-            cr_2_arr.append(cr_2.detach().clone().item())
-            # cr_2 = torch.norm(A_matrix @ x_hat - b)
-            if i == 0:
-                init_cr_1 = cr_1.item()
-                init_cr_2 = cr_2.item()
-                init_phi_value = phi_value.item()
-                init_f_value = f_value.item()
-
-            if writer is not None:
-                dump_tensorboard_info(i, f_value, cr_1, cr_2, state, writer)
-
-            tqdm_postfix_dict = {
-                'dual gap': f'{init_cr_1:.3f}->{cr_1.item():.3f}',
-                'eq': f'{init_cr_2:.3f}->{cr_2.item():.3f}',
-                'phi': f'{init_phi_value:.3f}->{phi_value.item():.3f}',
-                'f': f'{init_f_value:.3f}->{f_value.item():.3f}',
-            }
-            t.update()
-            t.set_postfix(tqdm_postfix_dict)
-
-            if cr_1 < eps and cr_2 < eps:
-                break
-
-            if max_steps is not None:
-                if i == max_steps - 1:
-                    break
-
-            i += 1
-    return i, cr_1_arr, cr_2_arr, phi_arr, f_arr
-
-
-def load_data(path="./data/"):
-    mndata = MNIST(path)
-    return mndata.load_training()
-
-
-def mnist(eps, p, q, images, m):
-    p, q = np.float64(images[p]), np.float64(images[q])
-    old_m = int(p.size**0.5)
-    if old_m != m:
-        p = cv2.resize(p.reshape(old_m, old_m), (m, m))
-        q = cv2.resize(q.reshape(old_m, old_m), (m, m))
-        p = p.reshape(-1)
-        q = q.reshape(-1)
-    n = m**2
-    # normalize
-    p, q = p / sum(p), q / sum(q)
-
-    # so there won't be any zeros
-    p = (1 - eps / 8) * p + eps / (8 * n)
-    q = (1 - eps / 8) * q + eps / (8 * n)
-
-    return p, q
-
-
+# TODO: Split this file to several distinct files
 def cartesian_product(*arrays):
     la = len(arrays)
     dtype = np.result_type(*arrays)
@@ -217,7 +24,6 @@ def cartesian_product(*arrays):
     return arr.reshape(-1, la)
 
 
-# ok
 def calculate_M_matrix(m):
     M_matrix = np.arange(m)
     M_matrix = cartesian_product(M_matrix, M_matrix)
@@ -336,6 +142,264 @@ def get_time(start_time):
     time_m = time_whole % 3600 // 60
     time_s = time_whole % 3600 % 60
     return time_h, time_m, time_s
+
+
+def init_tqdm(M_p, max_steps):
+    if max_steps is not None:
+        t = tqdm(desc=f"M_p = {M_p}", total=max_steps, leave=True)
+    else:
+        t = tqdm(desc=f"M_p = {M_p}", leave=True)
+    return t
+
+
+def update_tqdm(
+    t,
+    init_cr_1,
+    cr_1,
+    init_cr_2,
+    cr_2,
+    init_phi_value,
+    phi_value,
+    init_f_value,
+    f_value,
+):
+    tqdm_postfix_dict = {
+        "dual gap": f"{init_cr_1:.3f}->{cr_1:.3f}",
+        "eq": f"{init_cr_2:.3f}->{cr_2:.3f}",
+        "phi": f"{init_phi_value:.3f}->{phi_value:.3f}",
+        "f": f"{init_f_value:.3f}->{f_value:.3f}",
+    }
+    t.update()
+    t.set_postfix(tqdm_postfix_dict)
+
+
+def load_data(path="./data/"):
+    mndata = MNIST(path)
+    return mndata.load_training()
+
+
+def mnist(eps, p, q, images, m):
+    p, q = np.float64(images[p]), np.float64(images[q])
+    old_m = int(p.size**0.5)
+    if old_m != m:
+        p = cv2.resize(p.reshape(old_m, old_m), (m, m))
+        q = cv2.resize(q.reshape(old_m, old_m), (m, m))
+        p = p.reshape(-1)
+        q = q.reshape(-1)
+    n = m**2
+    # normalize
+    p, q = p / sum(p), q / sum(q)
+
+    # so there won't be any zeros
+    p = (1 - eps / 8) * p + eps / (8 * n)
+    q = (1 - eps / 8) * q + eps / (8 * n)
+
+    return p, q
+
+
+def init_data(image_index, new_m, eps, device):
+    images, labels = load_data()
+    if new_m is not None:
+        n = new_m**2
+        m = new_m
+    else:
+        n = len(images[0])
+        m = int(np.sqrt(n))
+
+    M_matrix = calculate_M_matrix(m)
+    M_matrix = M_matrix.to(device)
+
+    # experiments were done for
+    p_list = [34860, 31226, 239, 37372, 17390]
+    q_list = [45815, 35817, 43981, 54698, 49947]
+
+    epsp = eps / 8
+    # epsp = eps
+
+    p, q = mnist(epsp, p_list[image_index], q_list[image_index], images, m)
+    p = torch.tensor(p, device=device, dtype=torch.double)
+    q = torch.tensor(q, device=device, dtype=torch.double)
+
+    p_ref, q_ref = mnist(0, p_list[image_index], q_list[image_index], images, m)
+    p_ref = torch.tensor(p_ref, device=device, dtype=torch.double)
+    q_ref = torch.tensor(q_ref, device=device, dtype=torch.double)
+
+    return n, M_matrix, p, q, p_ref, q_ref
+    
+    
+def init_primal_dual_tm(lamb, n, M_p, gamma, M_matrix_over_gamma, ones, device) -> PrimalDualTensorMethod:
+    caclulate_primal_var = lambda lamb: calculate_x(
+        lamb, n, gamma, M_matrix_over_gamma, ones
+    )
+    optimizer = PrimalDualTensorMethod(
+        [lamb],
+        M_p=M_p,
+        p_order=torch.tensor(3, device=device),
+        calculate_primal_var=caclulate_primal_var,
+    )
+    return optimizer
+
+    
+def calculate_R_for_gradient_norm_tm(n, M_matrix, p, q, gamma) -> torch.float:
+    N = n
+    C = M_matrix
+    C_norm = C.norm(p=torch.inf)
+    log_factor = torch.log(min(p.min(), q.min()))
+    R = (N / 2) ** 0.5 * (C_norm - gamma / 2 * gamma / 2 * log_factor)
+    return R
+
+    
+def init_gradient_norm_tm(lamb, M_p, eps, n, gamma, M_matrix, p, q, device):
+    R = calculate_R_for_gradient_norm_tm(n, M_matrix, p, q, gamma)
+    optimizer = GradientNormTensorMethod(
+        [lamb],
+        M_p,
+        eps,
+        R,
+        p_order=torch.tensor(3, device=device)
+    )
+    return optimizer
+
+
+def optimize(
+    optimizer,
+    closure,
+    round_function,
+    eps,
+    M_matrix,
+    gamma,
+    max_steps=None,
+    device="cpu",
+    writer=None,
+):
+    i = 0
+
+    start_time = time.time()
+
+    cr_1_arr = []
+    cr_2_arr = []
+    f_arr = []
+
+    M_p = optimizer.param_groups[0]["M_p"]
+    t = init_tqdm(M_p, max_steps)
+
+    phi_arr = []
+    while True:
+        optimizer.step(closure)
+        torch.cuda.empty_cache()
+
+        with torch.no_grad():
+            state = optimizer.state["default"]
+            if type(optimizer) == PrimalDualTensorMethod:
+                X_hat_matrix_next = state["x_hat"][0]
+                phi_value = state["phi_next"][0].clone().item()
+            elif type(optimizer) == GradientNormTensorMethod:
+                raise NotImplementedError
+            else:
+                raise NotImplementedError
+
+            phi_arr.append(phi_value)
+
+            f_value = f(X_hat_matrix_next, M_matrix, gamma, device).item()
+            f_arr.append(f_value)
+
+            cr_1 = abs(phi_value + f_value)
+            cr_2 = abs(
+                (M_matrix * (round_function(X_hat_matrix_next) - X_hat_matrix_next))
+                .sum()
+                .item()
+            )
+            cr_1_arr.append(cr_1)
+            cr_2_arr.append(cr_2)
+            # cr_2 = torch.norm(A_matrix @ x_hat - b)
+            if i == 0:
+                init_cr_1 = cr_1
+                init_cr_2 = cr_2
+                init_phi_value = phi_value
+                init_f_value = f_value
+
+            if writer is not None:
+                dump_tensorboard_info(i, f_value, cr_1, cr_2, state, writer)
+
+            update_tqdm(
+                t,
+                init_cr_1,
+                cr_1,
+                init_cr_2,
+                cr_2,
+                init_phi_value,
+                phi_value,
+                init_f_value,
+                f_value,
+            )
+
+            if cr_1 < eps and cr_2 < eps:
+                break
+
+            if max_steps is not None:
+                if i == max_steps - 1:
+                    break
+
+            i += 1
+    return i, cr_1_arr, cr_2_arr, phi_arr, f_arr
+
+
+def run_experiment(
+    M_p,
+    gamma,
+    eps,
+    optimizer_class,
+    image_index=0,
+    new_m=None,
+    max_steps=None,
+    device="cpu",
+    tensorboard=False,
+):
+
+    n, M_matrix, p, q, p_ref, q_ref = init_data(image_index, new_m, eps, device)
+    gamma = torch.tensor(gamma, device=device)
+    M_matrix_over_gamma = M_matrix / gamma
+    ones = torch.ones(n, device=device, dtype=torch.double)
+
+    lamb = torch.zeros(
+        n * 2, dtype=torch.double, requires_grad=False, device=device
+    )
+    lamb.mul_(-1 / gamma).requires_grad_(True)
+
+    if type(optimizer_class) == GradientNormTensorMethod:
+        optimizer  = init_gradient_norm_tm(lamb, M_p, eps, n, gamma, M_matrix, p, q, device)
+        group = optimizer.param_groups[0]
+        mu = group['mu']
+        lamb_0 = lamb.detach().clone()
+        closure = lambda: phi(
+            lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=optimizer
+        ) + mu / 2 * torch.norm(lamb - lamb_0)**2
+
+    elif type(optimizer_class) == PrimalDualTensorMethod:
+        optimizer = init_primal_dual_tm(lamb, n, M_p, gamma, M_matrix_over_gamma, ones, device)
+        closure = lambda: phi(
+            lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=optimizer
+        )
+ 
+    round_function = lambda X_matrix: B_round(X_matrix, p_ref, q_ref, ones)
+
+    if tensorboard:
+        writer = SummaryWriter(f"tensorboard/TM_gamma_{gamma}_M_p_{M_p}")
+    else:
+        writer = None
+
+    i, cr_1_list, cr_2_list, phi_list, f_list = optimize(
+        optimizer,
+        closure,
+        round_function,
+        eps,
+        M_matrix,
+        gamma,
+        max_steps,
+        device,
+        writer,
+    )
+    return optimizer, i, cr_1_list, cr_2_list, phi_list, f_list
 
 
 if __name__ == "__main__":
