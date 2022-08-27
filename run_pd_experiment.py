@@ -348,7 +348,7 @@ def run_experiment(
     M_p,
     gamma,
     eps,
-    optimizer_class,
+    optimizer_type,
     image_index=0,
     new_m=None,
     max_steps=None,
@@ -366,7 +366,7 @@ def run_experiment(
     )
     lamb.mul_(-1 / gamma).requires_grad_(True)
 
-    if type(optimizer_class) == GradientNormTensorMethod:
+    if optimizer_type == GradientNormTensorMethod:
         optimizer  = init_gradient_norm_tm(lamb, M_p, eps, n, gamma, M_matrix, p, q, device)
         group = optimizer.param_groups[0]
         mu = group['mu']
@@ -375,7 +375,7 @@ def run_experiment(
             lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=optimizer
         ) + mu / 2 * torch.norm(lamb - lamb_0)**2
 
-    elif type(optimizer_class) == PrimalDualTensorMethod:
+    elif optimizer_type == PrimalDualTensorMethod:
         optimizer = init_primal_dual_tm(lamb, n, M_p, gamma, M_matrix_over_gamma, ones, device)
         closure = lambda: phi(
             lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=optimizer
