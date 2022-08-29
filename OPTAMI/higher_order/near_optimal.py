@@ -133,7 +133,7 @@ class NearOptimalTensorMethod(Optimizer):
                     f"theta_max: {init_theta_max}",
                 ]
             )
-            t = tqdm(desc="Step #0", postfix=tqdm_postfix)
+            t = tqdm(desc="Step #0", postfix=tqdm_postfix, total=1000)
 
         while upper_ineq or lower_ineq:
             theta = (theta_max + theta_min) / 2
@@ -157,11 +157,12 @@ class NearOptimalTensorMethod(Optimizer):
                 theta_max = theta
 
             ls_count += 1
-            if ls_count == 10000:
-                raise Exception('Number of lenear search iterations is greater \
-                    than 10000!')
+            if ls_count == 1000:
+                raise Exception(f'Number of lenear search iterations is greater \
+                    than {ls_count}!')
 
             if verbose_ls:
+                t.update()
                 t.set_description(f"Step #{ls_count}", refresh=False)
                 tqdm_postfix = ", ".join(
                     [
