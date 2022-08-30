@@ -7,3 +7,4 @@ data/
 .vscode
 .DS_Store
 *.pkl
+venv/
