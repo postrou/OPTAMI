@@ -2,6 +2,7 @@ from math import factorial
 
 import torch
 from torch.optim import Optimizer
+from tqdm.auto import trange
 
 import OPTAMI
 
@@ -20,11 +21,18 @@ class GradientNormTensorMethod(Optimizer):
         subsolver_args: dict = None,
         max_iters: int = None,
         verbose: bool = None,
+        calculate_primal_var=None,
     ):
         assert torch.all(
             params[0] == 0
         ), "R upper bound is written only for \
             x_0 = 0!"
+
+        #         if calculate_primal_var is None:
+        #             raise ValueError(
+        #                 "We need function for primal (x) value calculation from lambda (dual) variable"
+        #             )
+        self._calculate_primal_var = calculate_primal_var
 
         self.p_order = p_order
         self.tensor_step_method = tensor_step_method
@@ -38,15 +46,10 @@ class GradientNormTensorMethod(Optimizer):
 
         M_mu = (p_order + 2) * M_p
         mu = eps / (4 * R)
-        one_over_p = 1 / p_order
-        eps_tilde = (eps / 2) ** (1 + one_over_p) / (
-            4 * factorial(p_order + 2) * M_mu**one_over_p
-        )
         defaults = dict(
             M_p=M_p,
             M_mu=M_mu,
             mu=mu,
-            eps_tilde=eps_tilde,
         )
         super().__init__(params, defaults)
 
@@ -78,51 +81,75 @@ class GradientNormTensorMethod(Optimizer):
         state["k"] = 0
         state["inner_k"] = 0
         state["R"] = R
+        state["x"] = None
+        state["phi_mu"] = None
+        state["grad_phi_mu"] = None
 
-    def step(self, closure) -> None:
+    def step(self, closure, verbose_ls=False) -> None:
         assert len(self.param_groups) == 1
-        state = self.state["default"]
-
-        # steps 2-6
-        self._run_inner_cycle(closure)
-
-        # step 7
-        self._perform_tensor_step(closure)
-
-        state["k"] += 1
-
-    def _run_inner_cycle(self, closure):
         group = self.param_groups[0]
         mu = group["mu"]
-        eps_tilde = group["eps_tilde"]
         state = self.state["default"]
-        R = state["R"]
+        k = state["k"]
 
-        # step 2
-        while mu * R**2 / 2 >= eps_tilde:
-            inner_k = state["inner_k"]
-            if inner_k > 0:
-                # step 3
-                state["R"] /= 2**inner_k
-            # step 4
-            self._run_inner_tensor_method(closure, mu)
-            inner_tm_state = self.inner_tensor_method.state["default"]
-            N_k = inner_tm_state["k"]
-            assert N_k > 0, "Inner tensor method did not make any iterations"
+        # step 3
+        if k > 0:
+            state["R"] /= 2
 
-            # step 5
-            state["inner_k"] += 1
-
-    def _run_inner_tensor_method(self, closure, mu, verbose_ls=False):
-        A = 0
         # step 4
+        # self._run_inner_tensor_method(closure, mu, verbose_inner, verbose_ls)
         self._init_inner_tensor_method()
-        while A < 4 / mu:
-            self.inner_tensor_method.step(closure, verbose_ls)
-            inner_tm_state = self.inner_tensor_method.state["default"]
-            A = inner_tm_state["A"]
+        self.inner_tensor_method.step(closure, verbose_ls)
 
-    def _perform_tensor_step(self, closure):
+        # step 5
+        state["k"] += 1
+        self._update_state(closure)
+
+    # def _run_inner_tensor_method(self, closure, mu, verbose_inner=False, verbose_ls=False):
+    #     state = self.state['default']
+    #     A = 0
+    #     # step 4
+    #     self._init_inner_tensor_method()
+    #     inner_tm_state = self.inner_tensor_method.state['default']
+
+    #     max_iters = 1000
+    #     if verbose_inner:
+    #         postfix = {'A': inner_tm_state['A']}
+    #         rng = trange(max_iters, postfix=postfix)
+    #     else:
+    #         rng = range(max_iters)
+    #     for i in rng:
+    #         self.inner_tensor_method.step(closure, verbose_ls)
+    #         A = inner_tm_state["A"]
+    #         if A >= 4 / mu:
+    #             break
+
+    #         if verbose_inner:
+    #             postfix['A'] = A
+    #             rng.set_postfix(postfix)
+    #     else:
+    #         raise Exception(f'Number of iterations of inner tensor method exceeds {max_iters}')
+    #     if verbose_inner:
+    #         rng.close()
+
+    #     N_k = inner_tm_state['k']
+    #     assert N_k > 0, "Inner tensor method did not make any iterations"
+    #     state['inner_k'] = N_k
+
+    def _update_state(self, closure):
+        group = self.param_groups[0]
+        param = group["params"][0]
+        state = self.state["default"]
+
+        if self._calculate_primal_var is not None:
+            state["x"], _, _ = self._calculate_primal_var(param)
+        phi = closure()
+        state["phi_mu"] = phi.item()
+        phi.backward()
+        state["grad_phi_mu"] = param.grad.clone()
+        self.zero_grad()
+
+    def final_tensor_step(self, closure):
         group = self.param_groups[0]
         params = group["params"]
         M_mu = group["M_mu"]
