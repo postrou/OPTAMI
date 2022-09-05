@@ -52,7 +52,6 @@ class GradientNormTensorMethod(Optimizer):
             mu=mu,
         )
         super().__init__(params, defaults)
-
         self._init_state(R)
 
     def _init_inner_tensor_method(self):
@@ -84,26 +83,18 @@ class GradientNormTensorMethod(Optimizer):
         state["x"] = None
         state["phi_mu"] = None
         state["grad_phi_mu"] = None
+        
+        self._init_inner_tensor_method()
 
     def step(self, closure, verbose_ls=False) -> None:
         assert len(self.param_groups) == 1
-        group = self.param_groups[0]
-        mu = group["mu"]
-        state = self.state["default"]
-        k = state["k"]
-
-        # step 3
-        if k > 0:
-            state["R"] /= 2
-
+        
         # step 4
         # self._run_inner_tensor_method(closure, mu, verbose_inner, verbose_ls)
-        self._init_inner_tensor_method()
         self.inner_tensor_method.step(closure, verbose_ls)
 
         # step 5
-        state["k"] += 1
-        self._update_state(closure)
+        self._update_state_for_inner_loop(closure)
 
     # def _run_inner_tensor_method(self, closure, mu, verbose_inner=False, verbose_ls=False):
     #     state = self.state['default']
@@ -136,7 +127,7 @@ class GradientNormTensorMethod(Optimizer):
     #     assert N_k > 0, "Inner tensor method did not make any iterations"
     #     state['inner_k'] = N_k
 
-    def _update_state(self, closure):
+    def _update_state_for_inner_loop(self, closure):
         group = self.param_groups[0]
         param = group["params"][0]
         state = self.state["default"]
@@ -148,6 +139,17 @@ class GradientNormTensorMethod(Optimizer):
         phi.backward()
         state["grad_phi_mu"] = param.grad.clone()
         self.zero_grad()
+
+    def update_state_for_outer_loop(self):
+        state = self.state["default"]
+        k = state["k"]
+
+        # step 3
+        if k > 0:
+            state["R"] /= 2
+
+        state["k"] += 1
+        self._init_inner_tensor_method()
 
     def final_tensor_step(self, closure):
         group = self.param_groups[0]

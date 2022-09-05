@@ -448,9 +448,10 @@ def run_gradient_norm(
 
         inner_tqdm.close()
 
-        assert state["k"] == inner_i, f'{state["k"]}, {inner_i}'
+        # assert state["k"] == inner_i, f'{state["k"]}, {inner_i}'
         n_of_inner_steps += inner_i
 
+        optimizer.update_state_for_outer_loop()
         R = state["R"]
         criterion = mu * R**2 / 2
 
@@ -613,6 +614,7 @@ if __name__ == "__main__":
     parser.add_argument('M_p', type=float)
     parser.add_argument('--manual_restart', action='store_true')
     args = parser.parse_args()
+    # args = parser.parse_args('gn 0.01 --manual_restart'.split())
 
     M_p = args.M_p
     if args.tensor_method_type == 'pd':
@@ -625,7 +627,10 @@ if __name__ == "__main__":
     if manual_restart:
         assert args.tensor_method_type == 'gn', 'Manual restart is possible only for GradientNormTensorMethod'
 
-    device = "cuda:4"
+    if torch.cuda.is_available():
+        device = "cuda:4"
+    else:
+        device = 'cpu'
 
     gamma = 0.5
     eps = 0.001
