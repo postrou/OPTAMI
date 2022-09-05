@@ -1,6 +1,9 @@
 from math import factorial
 import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 import time
+import json
+import argparse
 
 from tqdm.auto import tqdm, trange
 import torch
@@ -338,7 +341,7 @@ def run_primal_dual(
 
 
 def run_gradient_norm(
-    optimizer, closure, eps, M_matrix, gamma, round_function, max_steps, device, writer
+    optimizer, closure, eps, M_matrix, gamma, round_function, max_steps, device, writer, manual_restart
 ):
     dual_gap_arr = []
     constraint_arr = []
@@ -361,6 +364,9 @@ def run_gradient_norm(
         4 * factorial(p_order + 2) * M_mu**one_over_p
     )
     criterion = mu * R**2 / 2
+
+    if manual_restart:
+        restart_after = 50
 
     outer_tqdm = init_tqdm(M_p, max_steps)
     i = 0
@@ -436,6 +442,10 @@ def run_gradient_norm(
                 )
 
                 inner_i += 1
+                if manual_restart:
+                    if inner_i == restart_after:
+                        break
+
         inner_tqdm.close()
 
         assert state["k"] == inner_i, f'{state["k"]}, {inner_i}'
@@ -463,7 +473,7 @@ def run_gradient_norm(
     optimizer.final_tensor_step(closure)
     X = state["x"]
     phi_mu_value = state["phi_mu"]
-    phi_value = phi_mu_value - mu / 2 * torch.norm(lamb - lamb_0)
+    phi_value = (phi_mu_value - mu / 2 * torch.norm(lamb - lamb_0)).item()
     grad_phi_mu_norm = state["grad_phi_mu"].norm()
     phi_arr.append(phi_value)
     f_value = f(X, M_matrix, gamma, device).item()
@@ -496,6 +506,7 @@ def optimize(
     max_steps=None,
     device="cpu",
     writer=None,
+    manual_restart=False
 ):
     if type(optimizer) == PrimalDualTensorMethod:
         i, cr_1_arr, cr_2_arr, phi_arr, f_arr = run_primal_dual(
@@ -520,6 +531,7 @@ def optimize(
             max_steps,
             device,
             writer,
+            manual_restart
         )
     return i, cr_1_arr, cr_2_arr, phi_arr, f_arr
 
@@ -534,6 +546,7 @@ def run_experiment(
     max_steps=None,
     device="cpu",
     tensorboard=False,
+    manual_restart=False
 ):
 
     n, M_matrix, p, q, p_ref, q_ref = init_data(image_index, new_m, eps, device)
@@ -589,30 +602,63 @@ def run_experiment(
         max_steps,
         device,
         writer,
+        manual_restart
     )
     return optimizer, i, cr_1_list, cr_2_list, phi_list, f_list
 
 
 if __name__ == "__main__":
-    device = "cpu"
+    parser = argparse.ArgumentParser(description='Run experiments for Optimal Transport')
+    parser.add_argument('tensor_method_type', type=str, help='"gn" or "pd"')
+    parser.add_argument('M_p', type=float)
+    parser.add_argument('--manual_restart', action='store_true')
+    args = parser.parse_args()
+
+    M_p = args.M_p
+    if args.tensor_method_type == 'pd':
+        tensor_method_type = PrimalDualTensorMethod
+    elif args.tensor_method_type == 'gn':
+        tensor_method_type = GradientNormTensorMethod
+    else:
+        raise NotImplementedError
+    manual_restart = args.manual_restart
+    if manual_restart:
+        assert args.tensor_method_type == 'gn', 'Manual restart is possible only for GradientNormTensorMethod'
+
+    device = "cuda:4"
 
     gamma = 0.5
     eps = 0.001
     image_index = 1
-    m = 10
+    # m = 10
+    m = None
     
     # M_p = calculate_lipschitz_constant(gamma, p_order=3)
-    M_p = 0.001
-
+    
     #     torch.autograd.set_detect_anomaly(True)
     optimizer, i, cr_1_list, cr_2_list, phi_list, f_list = run_experiment(
         M_p,
         gamma,
         eps,
-        PrimalDualTensorMethod,
+        tensor_method_type,
         image_index,
         m,
-        max_steps=1000,
+        max_steps=10000,
         device=device,
         tensorboard=True,
+        manual_restart=manual_restart
     )
+    result = {
+        'dual_gap': cr_1_list,
+        'constraint': cr_2_list,
+        'phi': phi_list,
+        'f': f_list
+    }
+
+    if manual_restart:
+        assert args.tensor_method_type == 'gn'
+        fn = f'{args.tensor_method_type}_M_p_{M_p}_mr.json'
+    else:
+        fn = f'{args.tensor_method_type}_M_p_{M_p}.json'
+    with open(fn, 'w') as f:
+        json.dump(result, f)
