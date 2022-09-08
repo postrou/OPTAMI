@@ -1,21 +1,22 @@
+import argparse
+import json
+import time
 from math import factorial
 import os
-os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-import time
-import json
-import argparse
 
-from tqdm.auto import tqdm, trange
+import cv2
+from IPython.display import clear_output
+from mnist import MNIST
+from scipy.spatial.distance import cdist
+import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
-import numpy as np
-from scipy.spatial.distance import cdist
-from mnist import MNIST
-from IPython.display import clear_output
-import cv2
+from tqdm.auto import tqdm, trange
 
-from OPTAMI.higher_order import PrimalDualTensorMethod
 from OPTAMI.higher_order.gradient_norm import GradientNormTensorMethod
+from OPTAMI.higher_order import PrimalDualTensorMethod
+
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
 
 # TODO: Split this file to several distinct files
@@ -48,7 +49,8 @@ def calculate_x_old(lamb, n, gamma, M_matrix_over_gamma, ones):
 # softmax
 def calculate_x(lamb, n, gamma, M_matrix_over_gamma, ones):
     log_X = (
-        -M_matrix_over_gamma + torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])
+        -M_matrix_over_gamma +
+        torch.outer(lamb[:n], ones) + torch.outer(ones, lamb[n:])
     )
     max_log_X = log_X.max()
     log_X_stable = log_X - max_log_X
@@ -91,7 +93,8 @@ def grad_phi(lamb, gamma, calculate_primal_var, p, q, ones, device="cpu"):
     X_stable, X_stable_sum, _ = calculate_primal_var(lamb)
     u_hat_stable, v_hat_stable = X_stable @ ones, X_stable.T @ ones
 
-    grad_phi = gamma * torch.cat((-p + u_hat_stable, -q + v_hat_stable)).to(device)
+    grad_phi = gamma * \
+        torch.cat((-p + u_hat_stable, -q + v_hat_stable)).to(device)
     return grad_phi
 
 
@@ -226,7 +229,8 @@ def init_data(image_index, new_m, eps, device):
     p = torch.tensor(p, device=device, dtype=torch.double)
     q = torch.tensor(q, device=device, dtype=torch.double)
 
-    p_ref, q_ref = mnist(0, p_list[image_index], q_list[image_index], images, m)
+    p_ref, q_ref = mnist(0, p_list[image_index],
+                         q_list[image_index], images, m)
     p_ref = torch.tensor(p_ref, device=device, dtype=torch.double)
     q_ref = torch.tensor(q_ref, device=device, dtype=torch.double)
 
@@ -236,7 +240,7 @@ def init_data(image_index, new_m, eps, device):
 def init_primal_dual_tm(
     lamb, n, M_p, gamma, M_matrix_over_gamma, ones, device
 ) -> PrimalDualTensorMethod:
-    calculate_primal_var = lambda lamb: calculate_x(
+    def calculate_primal_var(lamb): return calculate_x(
         lamb, n, gamma, M_matrix_over_gamma, ones
     )
     optimizer = PrimalDualTensorMethod(
@@ -260,7 +264,8 @@ def calculate_R_for_gradient_norm_tm(n, M_matrix, p, q, gamma) -> torch.float:
 # TODO: change all ones to torch.ones
 def init_gradient_norm_tm(lamb, n, M_p, gamma, eps, M_matrix, p, q, ones, device):
     R = calculate_R_for_gradient_norm_tm(n, M_matrix, p, q, gamma)
-    calculate_primal_var = lambda lamb: calculate_x(
+
+    def calculate_primal_var(lamb): return calculate_x(
         lamb, n, gamma, M_matrix / gamma, ones
     )
     eps = min(eps / (2 * R), eps)  # since \e_{eq} == \e_{f}
@@ -315,7 +320,8 @@ def run_primal_dual(
                 init_f_value = f_value
 
             if writer is not None:
-                dump_tensorboard_info(i, f_value, cr_1, cr_2, phi_value, writer)
+                dump_tensorboard_info(
+                    i, f_value, cr_1, cr_2, phi_value, writer)
 
             update_tqdm(
                 t,
@@ -341,13 +347,22 @@ def run_primal_dual(
 
 
 def run_gradient_norm(
-    optimizer, closure, eps, M_matrix, gamma, round_function, max_steps, device, writer, manual_restart
+    optimizer,
+    closure,
+    eps,
+    M_matrix,
+    gamma,
+    round_function,
+    max_steps,
+    device,
+    writer,
+    man_restart_iters,
 ):
     dual_gap_arr = []
     constraint_arr = []
     f_arr = []
     phi_arr = []
-    grad_phi_arr = []
+    grad_phi_norm_arr = []
 
     group = optimizer.param_groups[0]
     mu = group["mu"]
@@ -364,9 +379,6 @@ def run_gradient_norm(
         4 * factorial(p_order + 2) * M_mu**one_over_p
     )
     criterion = mu * R**2 / 2
-
-    if manual_restart:
-        restart_after = 50
 
     outer_tqdm = init_tqdm(M_p, max_steps)
     i = 0
@@ -396,15 +408,22 @@ def run_gradient_norm(
                 A = inner_tm_state["A"].item()
                 X = state["x"]
                 phi_mu_value = state["phi_mu"]
-                lamb = group['params'][0]
-                phi_value = (phi_mu_value - mu / 2 * torch.norm(lamb - lamb_0)**2).item()
-                grad_phi_mu_norm = state["grad_phi_mu"].norm()
+                lamb = group["params"][0]
+                phi_value = (
+                    phi_mu_value - mu / 2 * torch.norm(lamb - lamb_0) ** 2
+                ).item()
                 phi_arr.append(phi_value)
+                # grad_phi_mu_norm = state["grad_phi_mu"].norm()
+                grad_phi_norm = torch.norm(
+                    state["grad_phi_mu"] - mu * (lamb - lamb_0)
+                ).item()
+                grad_phi_norm_arr.append(grad_phi_norm)
                 f_value = f(X, M_matrix, gamma, device).item()
                 f_arr.append(f_value)
 
                 dual_gap = abs(phi_value + f_value)
-                constraint = abs((M_matrix * (round_function(X) - X)).sum().item())
+                constraint = abs(
+                    (M_matrix * (round_function(X) - X)).sum().item())
                 dual_gap_arr.append(dual_gap)
                 constraint_arr.append(constraint)
                 # cr_2 = torch.norm(A_matrix @ x_hat - b)
@@ -413,13 +432,13 @@ def run_gradient_norm(
                     inner_init_constraint = constraint
                     inner_init_phi_value = phi_value
                     inner_init_f_value = f_value
-                    inner_init_grad_phi_mu_norm = grad_phi_mu_norm
+                    inner_init_grad_phi_norm = grad_phi_norm
                     if i == 0:
                         init_dual_gap = inner_init_dual_gap
                         init_constraint = inner_init_constraint
                         init_phi_value = inner_init_phi_value
                         init_f_value = inner_init_f_value
-                        init_grad_phi_mu_norm = inner_init_grad_phi_mu_norm
+                        init_grad_phi_norm = inner_init_grad_phi_norm
 
                 if writer is not None:
                     dump_tensorboard_info(
@@ -436,14 +455,14 @@ def run_gradient_norm(
                     phi_value,
                     inner_init_f_value,
                     f_value,
-                    inner_init_grad_phi_mu_norm,
-                    grad_phi_mu_norm,
+                    inner_init_grad_phi_norm,
+                    grad_phi_norm,
                     A,
                 )
 
                 inner_i += 1
-                if manual_restart:
-                    if inner_i == restart_after:
+                if man_restart_iters is not None:
+                    if inner_i == man_restart_iters:
                         break
 
         inner_tqdm.close()
@@ -465,8 +484,8 @@ def run_gradient_norm(
             phi_value,
             init_f_value,
             f_value,
-            init_grad_phi_mu_norm,
-            grad_phi_mu_norm,
+            init_grad_phi_norm,
+            grad_phi_norm,
         )
 
         i += 1
@@ -475,8 +494,11 @@ def run_gradient_norm(
     X = state["x"]
     phi_mu_value = state["phi_mu"]
     phi_value = (phi_mu_value - mu / 2 * torch.norm(lamb - lamb_0)).item()
-    grad_phi_mu_norm = state["grad_phi_mu"].norm()
     phi_arr.append(phi_value)
+    # grad_phi_mu_norm = state["grad_phi_mu"].norm()
+    grad_phi_norm = torch.norm(
+        state["grad_phi_mu"] - mu * (lamb - lamb_0)).item()
+    grad_phi_norm_arr.append(grad_phi_norm)
     f_value = f(X, M_matrix, gamma, device).item()
     f_arr.append(f_value)
 
@@ -489,12 +511,12 @@ def run_gradient_norm(
     print(f"Total number of inner steps = {n_of_inner_steps}")
     print(f"Number of outer steps = {i}")
     print(f"phi_value: {init_phi_value:.3f}->{phi_value:.3f}")
-    print(f"grad_phi_mu.norm(): {init_grad_phi_mu_norm:.3f}->{grad_phi_mu_norm:.3f}")
+    print(f"grad_phi.norm(): {init_grad_phi_norm:.3f}->{grad_phi_norm:.3f}")
     print(f"f_value: {init_f_value:.3f}->{f_value:.3f}")
     print(f"|f_value - phi_value|: {init_dual_gap:.3f}->{dual_gap:.3f}")
     print(f"||Ax - b||: {init_constraint:.3f}->{constraint:.3f}")
 
-    return i, dual_gap_arr, constraint_arr, phi_arr, f_arr
+    return i, dual_gap_arr, constraint_arr, phi_arr, f_arr, grad_phi_norm_arr
 
 
 def optimize(
@@ -507,7 +529,7 @@ def optimize(
     max_steps=None,
     device="cpu",
     writer=None,
-    manual_restart=False
+    man_restart_iters=None,
 ):
     if type(optimizer) == PrimalDualTensorMethod:
         i, cr_1_arr, cr_2_arr, phi_arr, f_arr = run_primal_dual(
@@ -521,8 +543,9 @@ def optimize(
             device,
             writer,
         )
+        grad_phi_norm_arr = None
     elif type(optimizer) == GradientNormTensorMethod:
-        i, cr_1_arr, cr_2_arr, phi_arr, f_arr = run_gradient_norm(
+        i, cr_1_arr, cr_2_arr, phi_arr, f_arr, grad_phi_norm_arr = run_gradient_norm(
             optimizer,
             closure,
             eps,
@@ -532,9 +555,9 @@ def optimize(
             max_steps,
             device,
             writer,
-            manual_restart
+            man_restart_iters,
         )
-    return i, cr_1_arr, cr_2_arr, phi_arr, f_arr
+    return i, cr_1_arr, cr_2_arr, phi_arr, f_arr, grad_phi_norm_arr
 
 
 def run_experiment(
@@ -547,15 +570,17 @@ def run_experiment(
     max_steps=None,
     device="cpu",
     tensorboard=False,
-    manual_restart=False
+    man_restart_iters=None,
 ):
 
-    n, M_matrix, p, q, p_ref, q_ref = init_data(image_index, new_m, eps, device)
+    n, M_matrix, p, q, p_ref, q_ref = init_data(
+        image_index, new_m, eps, device)
     gamma = torch.tensor(gamma, device=device)
     M_matrix_over_gamma = M_matrix / gamma
     ones = torch.ones(n, device=device, dtype=torch.double)
 
-    lamb = torch.zeros(n * 2, dtype=torch.double, requires_grad=False, device=device)
+    lamb = torch.zeros(n * 2, dtype=torch.double,
+                       requires_grad=False, device=device)
     lamb.mul_(-1 / gamma).requires_grad_(True)
 
     if optimizer_type == GradientNormTensorMethod:
@@ -576,11 +601,12 @@ def run_experiment(
         optimizer = init_primal_dual_tm(
             lamb, n, M_p, gamma, M_matrix_over_gamma, ones, device
         )
-        closure = lambda: phi(
+
+        def closure(): return phi(
             lamb, n, gamma, M_matrix_over_gamma, ones, p, q, optimizer=optimizer
         )
 
-    round_function = lambda X_matrix: B_round(X_matrix, p_ref, q_ref, ones)
+    def round_function(X_matrix): return B_round(X_matrix, p_ref, q_ref, ones)
 
     if tensorboard:
         if optimizer_type == PrimalDualTensorMethod:
@@ -593,7 +619,7 @@ def run_experiment(
     else:
         writer = None
 
-    i, cr_1_list, cr_2_list, phi_list, f_list = optimize(
+    i, cr_1_list, cr_2_list, phi_list, f_list, grad_phi_norm_list = optimize(
         optimizer,
         closure,
         round_function,
@@ -603,67 +629,80 @@ def run_experiment(
         max_steps,
         device,
         writer,
-        manual_restart
+        man_restart_iters,
     )
-    return optimizer, i, cr_1_list, cr_2_list, phi_list, f_list
+    return optimizer, i, cr_1_list, cr_2_list, phi_list, f_list, grad_phi_norm_list
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Run experiments for Optimal Transport')
-    parser.add_argument('tensor_method_type', type=str, help='"gn" or "pd"')
-    parser.add_argument('M_p', type=float)
-    parser.add_argument('--manual_restart', action='store_true')
+    parser = argparse.ArgumentParser(
+        description="Run experiments for Optimal Transport"
+    )
+    parser.add_argument("tensor_method_type", type=str, help='"gn" or "pd"')
+    parser.add_argument("M_p", type=float)
+    parser.add_argument(
+        "--mr",
+        action="store",
+        type=int,
+        help="whether to use manual restarts after n iterations",
+    )
     args = parser.parse_args()
-    # args = parser.parse_args('gn 0.01 --manual_restart'.split())
+    # args = parser.parse_args("gn 0.01 --mr 2".split())
 
     M_p = args.M_p
-    if args.tensor_method_type == 'pd':
+    if args.tensor_method_type == "pd":
         tensor_method_type = PrimalDualTensorMethod
-    elif args.tensor_method_type == 'gn':
+    elif args.tensor_method_type == "gn":
         tensor_method_type = GradientNormTensorMethod
     else:
         raise NotImplementedError
-    manual_restart = args.manual_restart
-    if manual_restart:
-        assert args.tensor_method_type == 'gn', 'Manual restart is possible only for GradientNormTensorMethod'
+    man_restart_iters = args.mr
+    if man_restart_iters is not None:
+        assert (
+            args.tensor_method_type == "gn"
+        ), "Manual restart is possible only for GradientNormTensorMethod"
+        assert man_restart_iters > 0
 
     if torch.cuda.is_available():
         device = "cuda:4"
     else:
-        device = 'cpu'
+        device = "cpu"
 
     gamma = 0.5
     eps = 0.001
     image_index = 1
     # m = 10
     m = None
-    
-    # M_p = calculate_lipschitz_constant(gamma, p_order=3)
-    
-    #     torch.autograd.set_detect_anomaly(True)
-    optimizer, i, cr_1_list, cr_2_list, phi_list, f_list = run_experiment(
-        M_p,
-        gamma,
-        eps,
-        tensor_method_type,
-        image_index,
-        m,
-        max_steps=10000,
-        device=device,
-        tensorboard=True,
-        manual_restart=manual_restart
-    )
-    result = {
-        'dual_gap': cr_1_list,
-        'constraint': cr_2_list,
-        'phi': phi_list,
-        'f': f_list
-    }
 
-    if manual_restart:
-        assert args.tensor_method_type == 'gn'
-        fn = f'{args.tensor_method_type}_M_p_{M_p}_mr.json'
+    # M_p = calculate_lipschitz_constant(gamma, p_order=3)
+
+    #     torch.autograd.set_detect_anomaly(True)
+    optimizer, i, cr_1_list, cr_2_list, phi_list, f_list, grad_phi_norm_list = \
+        run_experiment(
+            M_p,
+            gamma,
+            eps,
+            tensor_method_type,
+            image_index,
+            m,
+            max_steps=20000,
+            device=device,
+            tensorboard=True,
+            man_restart_iters=man_restart_iters,
+        )
+    result = {
+        "dual_gap": cr_1_list,
+        "constraint": cr_2_list,
+        "phi": phi_list,
+        "f": f_list,
+    }
+    if args.tensor_method_type == "gn":
+        result["grad_norm"] = grad_phi_norm_list
+
+    if man_restart_iters is not None:
+        assert args.tensor_method_type == "gn"
+        fp = f"results/{args.tensor_method_type}_M_p_{M_p}_mr_{man_restart_iters}.json"
     else:
-        fn = f'{args.tensor_method_type}_M_p_{M_p}.json'
-    with open(fn, 'w') as f:
+        fp = f"results/{args.tensor_method_type}_M_p_{M_p}.json"
+    with open(fp, "w") as f:
         json.dump(result, f)
