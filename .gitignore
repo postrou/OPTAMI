@@ -8,3 +8,6 @@ data/
 .DS_Store
 *.pkl
 venv/
+tensorboard/
+.python-version
+results/
