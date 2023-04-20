@@ -105,10 +105,11 @@ def exact(L, c, T, U, tol=1e-10):
     def inv(T, L, tau): return T.add(math.sqrt(2 * L) * tau).reciprocal()
     def dual(tau): return  tau.square() + inv(T, L, tau).mul(ct.square()).sum()
 
+    device = c.device
     tau_best = line_search.ray_line_search(
         dual,
-        middle_point=torch.tensor([2.]),
-        left_point=torch.tensor([0.]),
+        middle_point=torch.tensor([2.], device=device),
+        left_point=torch.tensor([0.], device=device),
         eps=tol)
 
     invert = inv(T, L, tau_best)
