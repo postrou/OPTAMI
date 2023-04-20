@@ -28,6 +28,7 @@ class PrimalDualTensorMethod(Optimizer):
         self.verbose = verbose
         self.keep_psi_data = keep_psi_data
         self._calculate_primal_var = calculate_primal_var
+        self.device = params[0].device
 
         if not M_p >= 0.0:
             raise ValueError("Invalid L: {}".format(M_p))
@@ -69,6 +70,7 @@ class PrimalDualTensorMethod(Optimizer):
     def _init_state(self):
         assert len(self.param_groups) == 1
         group = self.param_groups[0]
+        device = self.device
         params = group["params"]
 
         # filling state
@@ -80,12 +82,12 @@ class PrimalDualTensorMethod(Optimizer):
             ), "May be some troubles with tensor of higher order"
 
         state["x_hat"] = []
-        state["grad_phi_sum"] = [torch.zeros_like(param) for param in params]
+        state["grad_phi_sum"] = [torch.zeros_like(param, device=device) for param in params]
         state["phi_next"] = None
         state["psi"] = None
         state["A"] = 0.0
         state["k"] = 0
-        state["v"] = [torch.zeros_like(param) for param in params]
+        state["v"] = [torch.zeros_like(param, device=device) for param in params]
         if self.keep_psi_data:
             state["A_arr"] = [state["A"]]
             state["phi_arr"] = [None]
