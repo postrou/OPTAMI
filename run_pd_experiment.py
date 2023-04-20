@@ -252,12 +252,13 @@ def init_primal_dual_tm(
     return optimizer
 
 
+# see Lemma 11, https://arxiv.org/pdf/1906.03622.pdf
 def calculate_R_for_gradient_norm_tm(n, M_matrix, p, q, gamma) -> torch.float:
     N = n
     C = M_matrix
     C_norm = C.norm(p=torch.inf)
     log_factor = torch.log(min(p.min(), q.min()))
-    R = (N / 2) ** 0.5 * (C_norm - gamma / 2 * gamma / 2 * log_factor)
+    R = (N / 2) ** 0.5 * (C_norm - gamma / 2 * log_factor)
     return R
 
 
@@ -363,6 +364,7 @@ def run_gradient_norm(
     f_arr = []
     phi_arr = []
     grad_phi_norm_arr = []
+    restart_iter_arr = []
 
     group = optimizer.param_groups[0]
     mu = group["mu"]
@@ -469,6 +471,7 @@ def run_gradient_norm(
 
         # assert state["k"] == inner_i, f'{state["k"]}, {inner_i}'
         n_of_inner_steps += inner_i
+        restart_iter_arr.append(n_of_inner_steps)
 
         optimizer.update_state_for_outer_loop()
         R = state["R"]
@@ -510,6 +513,7 @@ def run_gradient_norm(
     print("Final results:")
     print(f"Total number of inner steps = {n_of_inner_steps}")
     print(f"Number of outer steps = {i}")
+    print(f'Restarts are performed after iterations {restart_iter_arr}')
     print(f"phi_value: {init_phi_value:.3f}->{phi_value:.3f}")
     print(f"grad_phi.norm(): {init_grad_phi_norm:.3f}->{grad_phi_norm:.3f}")
     print(f"f_value: {init_f_value:.3f}->{f_value:.3f}")
@@ -646,8 +650,15 @@ if __name__ == "__main__":
         type=int,
         help="whether to use manual restarts after n iterations",
     )
+    parser.add_argument(
+        '--cuda', 
+        action="store", 
+        type=int, 
+        help="Cuda number",
+        default=7
+    )
     args = parser.parse_args()
-    # args = parser.parse_args("gn 0.01 --mr 2".split())
+    # args = parser.parse_args("gn 0.5".split())
 
     M_p = args.M_p
     if args.tensor_method_type == "pd":
@@ -664,7 +675,7 @@ if __name__ == "__main__":
         assert man_restart_iters > 0
 
     if torch.cuda.is_available():
-        device = "cuda:4"
+        device = f"cuda:{args.cuda}"
     else:
         device = "cpu"
 
